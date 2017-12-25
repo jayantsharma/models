@@ -60,7 +60,7 @@ parser.add_argument('--eval_interval_secs', type=int, default=60*5,
 parser.add_argument('--num_examples', type=int, default=10000,
                     help='Number of examples to run.')
 
-parser.add_argument('--run_once', type=bool, default=False,
+parser.add_argument('--run_once', type=bool, default=True,
                     help='Whether to run eval only once.')
 
 
@@ -160,4 +160,4 @@ def main(argv=None):  # pylint: disable=unused-argument
 
 if __name__ == '__main__':
   FLAGS = parser.parse_args()
-  tf.app.run()
+  tf.app.run(main=main)

@@ -265,7 +265,7 @@ def inference(images):
     conv = tf.nn.conv2d(conv3, kernel, [1, 1, 1, 1], padding='SAME')
     biases = _variable_on_cpu('biases', [128], tf.constant_initializer(0.1))
     pre_activation = tf.nn.bias_add(conv, biases)
-    conv2 = tf.nn.relu(pre_activation, name=scope.name)
+    conv4 = tf.nn.relu(pre_activation, name=scope.name)
     _activation_summary(conv2)
 
   # pool2

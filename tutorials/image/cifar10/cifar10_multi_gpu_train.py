@@ -48,6 +48,7 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 import cifar10
+import cifar10_input
 
 parser = cifar10.parser
 
@@ -163,9 +164,11 @@ def train():
     opt = tf.train.GradientDescentOptimizer(lr)
 
     # Get images and labels for CIFAR-10.
-    images, labels = cifar10.distorted_inputs()
-    batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
-          [images, labels], capacity=2 * FLAGS.num_gpus)
+    # images, labels = cifar10.distorted_inputs()
+    iterator = cifar10_input.distorted_inputs(FLAGS.batch_size)
+
+    # batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
+    #       [images, labels], capacity=2 * FLAGS.num_gpus)
     # Calculate the gradients for each model tower.
     tower_grads = []
     with tf.variable_scope(tf.get_variable_scope()):
@@ -173,7 +176,8 @@ def train():
         with tf.device('/gpu:%d' % i):
           with tf.name_scope('%s_%d' % (cifar10.TOWER_NAME, i)) as scope:
             # Dequeues one batch for the GPU
-            image_batch, label_batch = batch_queue.dequeue()
+            # image_batch, label_batch = batch_queue.dequeue()
+            image_batch, label_batch = iterator.next_element()
             # Calculate the loss for one tower of the CIFAR model. This function
             # constructs the entire CIFAR model but shares the variables across
             # all towers.
@@ -224,19 +228,22 @@ def train():
     # Build the summary operation from the last tower summaries.
     summary_op = tf.summary.merge(summaries)
 
-    # Build an initialization operation to run below.
-    init = tf.global_variables_initializer()
-
     # Start running operations on the Graph. allow_soft_placement must be set to
     # True to build towers on GPU, as some of the ops do not have GPU
     # implementations.
     sess = tf.Session(config=tf.ConfigProto(
         allow_soft_placement=True,
         log_device_placement=FLAGS.log_device_placement))
-    sess.run(init)
+
+    # Build an initialization operation.
+    init = tf.group(tf.global_variables_initializer(), iterator.initializer())
+    # To feed data placeholders for iterator.
+    images, labels = cifar10_input.read_svhn(FLAGS.data_dir, train=True)
+    sess.run(init, feed_dict={images_placeholder: images,
+                              labels_placeholder: labels})
 
     # Start the queue runners.
-    tf.train.start_queue_runners(sess=sess)
+    # tf.train.start_queue_runners(sess=sess)
 
     summary_writer = tf.summary.FileWriter(FLAGS.train_dir, sess.graph)
 
@@ -268,7 +275,7 @@ def train():
 
 
 def main(argv=None):  # pylint: disable=unused-argument
-  cifar10.maybe_download_and_extract()
+  # cifar10.maybe_download_and_extract()
   if tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.DeleteRecursively(FLAGS.train_dir)
   tf.gfile.MakeDirs(FLAGS.train_dir)

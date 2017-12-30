@@ -1,35 +1,5 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
+"""Evaluation for SVHN."""
 
-"""Evaluation for CIFAR-10.
-
-Accuracy:
-cifar10_train.py achieves 83.0% accuracy after 100K steps (256 epochs
-of data) as judged by cifar10_eval.py.
-
-Speed:
-On a single Tesla K40, cifar10_train.py processes a single batch of 128 images
-in 0.25-0.35 sec (i.e. 350 - 600 images /sec). The model reaches ~86%
-accuracy after 100K steps in 8 hours of training time.
-
-Usage:
-Please see the tutorial and website for how to download the CIFAR-10
-data set, compile the program and train the model.
-
-http://tensorflow.org/tutorials/deep_cnn/
-"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -41,30 +11,31 @@ import time
 import numpy as np
 import tensorflow as tf
 
-import cifar10
+import svhn
+import svhn_input
 
-parser = cifar10.parser
+parser = svhn.parser
 
-parser.add_argument('--eval_dir', type=str, default='/tmp/cifar10_eval',
+parser.add_argument('--eval_dir', type=str, default='/tmp/svhn_eval',
                     help='Directory where to write event logs.')
 
 parser.add_argument('--eval_data', type=str, default='test',
                     help='Either `test` or `train_eval`.')
 
-parser.add_argument('--checkpoint_dir', type=str, default='/tmp/cifar10_train',
+parser.add_argument('--checkpoint_dir', type=str, default='/tmp/svhn_train',
                     help='Directory where to read model checkpoints.')
 
 parser.add_argument('--eval_interval_secs', type=int, default=60*5,
                     help='How often to run the eval.')
 
-parser.add_argument('--num_examples', type=int, default=10000,
+parser.add_argument('--num_examples', type=int, default=26032,
                     help='Number of examples to run.')
 
 parser.add_argument('--run_once', type=bool, default=True,
                     help='Whether to run eval only once.')
 
 
-def eval_once(saver, summary_writer, top_k_op, summary_op, iterator):
+def eval_once(saver, summary_writer, top_k_op, summary_op):
   """Run Eval once.
 
   Args:
@@ -74,17 +45,12 @@ def eval_once(saver, summary_writer, top_k_op, summary_op, iterator):
     summary_op: Summary op.
   """
   with tf.Session() as sess:
-    init = iterator.initializer()
-    images, labels = cifar10_input.read_svhn(FLAGS.data_dir, train=False)
-    sess.run(init, feed_dict={images_placeholder: images,
-                              labels_placeholder: labels})
-
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_dir)
     if ckpt and ckpt.model_checkpoint_path:
       # Restores from checkpoint
       saver.restore(sess, ckpt.model_checkpoint_path)
       # Assuming model_checkpoint_path looks something like:
-      #   /my-favorite-path/cifar10_train/model.ckpt-0,
+      #   /my-favorite-path/svhn_train/model.ckpt-0,
       # extract global_step from it.
       global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
     else:
@@ -95,7 +61,7 @@ def eval_once(saver, summary_writer, top_k_op, summary_op, iterator):
     true_count = 0  # Counts the number of correct predictions.
     total_sample_count = num_iter * FLAGS.batch_size
     step = 0
-    while step < num_iter and not coord.should_stop():
+    while step < num_iter:
       predictions = sess.run([top_k_op])
       true_count += np.sum(predictions)
       step += 1
@@ -110,23 +76,24 @@ def eval_once(saver, summary_writer, top_k_op, summary_op, iterator):
     summary_writer.add_summary(summary, global_step)
 
 def evaluate():
-  """Eval CIFAR-10 for a number of steps."""
+  """Eval SVHN for a number of steps."""
   with tf.Graph().as_default() as g:
-    # Get images and labels for CIFAR-10.
+    # Get images and labels for SVHN.
     eval_data = FLAGS.eval_data == 'test'
-    iterator = cifar10_inputs.inputs(FLAGS.batch_size)
-    images, labels = iterator.next_element()
+    images, labels = svhn_input.inputs(FLAGS.data_dir, FLAGS.batch_size)
+    labels = tf.reshape(labels, [-1])
+    labels = tf.cast(labels, tf.int64)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    logits = cifar10.inference(images)
+    logits = svhn.inference(images)
 
     # Calculate predictions.
     top_k_op = tf.nn.in_top_k(logits, labels, 1)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
-        cifar10.MOVING_AVERAGE_DECAY)
+        svhn.MOVING_AVERAGE_DECAY)
     variables_to_restore = variable_averages.variables_to_restore()
     saver = tf.train.Saver(variables_to_restore)
 
@@ -136,14 +103,13 @@ def evaluate():
     summary_writer = tf.summary.FileWriter(FLAGS.eval_dir, g)
 
     while True:
-      eval_once(saver, summary_writer, top_k_op, summary_op, iterator)
+      eval_once(saver, summary_writer, top_k_op, summary_op)
       if FLAGS.run_once:
         break
       time.sleep(FLAGS.eval_interval_secs)
 
 
 def main(argv=None):  # pylint: disable=unused-argument
-  cifar10.maybe_download_and_extract()
   if tf.gfile.Exists(FLAGS.eval_dir):
     tf.gfile.DeleteRecursively(FLAGS.eval_dir)
   tf.gfile.MakeDirs(FLAGS.eval_dir)

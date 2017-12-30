@@ -1,40 +1,16 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
-"""A binary to train CIFAR-10 using multiple GPUs with synchronous updates.
+"""A binary to train SVHN using multiple GPUs with synchronous updates.
 
 Accuracy:
-cifar10_multi_gpu_train.py achieves ~86% accuracy after 100K steps (256
-epochs of data) as judged by cifar10_eval.py.
+svhn_train.py achieves ~94% accuracy after 12500K steps (~22 epochs of
+data) as judged by svhn_eval.py.
 
 Speed: With batch_size 128.
 
 System        | Step Time (sec/batch)  |     Accuracy
---------------------------------------------------------------------
-1 Tesla K20m  | 0.35-0.60              | ~86% at 60K steps  (5 hours)
-1 Tesla K40m  | 0.25-0.35              | ~86% at 100K steps (4 hours)
-2 Tesla K20m  | 0.13-0.20              | ~84% at 30K steps  (2.5 hours)
-3 Tesla K20m  | 0.13-0.18              | ~84% at 30K steps
-4 Tesla K20m  | ~0.10                  | ~84% at 30K steps
-
-Usage:
-Please see the tutorial and website for how to download the CIFAR-10
-data set, compile the program and train the model.
-
-http://tensorflow.org/tutorials/deep_cnn/
+------------------------------------------------------------------
+1 Tesla K40m  | 0.050                  | ~94% at 12500 steps (15-20 minutes)
 """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -47,12 +23,12 @@ import time
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
-import cifar10
-import cifar10_input
+import svhn
+import svhn_input
 
-parser = cifar10.parser
+parser = svhn.parser
 
-parser.add_argument('--train_dir', type=str, default='/tmp/cifar10_train',
+parser.add_argument('--train_dir', type=str, default='/tmp/svhn_train',
                     help='Directory where to write event logs and checkpoint.')
 
 parser.add_argument('--max_steps', type=int, default=12500,
@@ -66,10 +42,10 @@ parser.add_argument('--log_device_placement', type=bool, default=False,
 
 
 def tower_loss(scope, images, labels):
-  """Calculate the total loss on a single tower running the CIFAR model.
+  """Calculate the total loss on a single tower running the SVHN model.
 
   Args:
-    scope: unique prefix string identifying the CIFAR tower, e.g. 'tower_0'
+    scope: unique prefix string identifying the SVHN tower, e.g. 'tower_0'
     images: Images. 4D tensor of shape [batch_size, height, width, 3].
     labels: Labels. 1D tensor of shape [batch_size].
 
@@ -78,11 +54,11 @@ def tower_loss(scope, images, labels):
   """
 
   # Build inference Graph.
-  logits = cifar10.inference(images)
+  logits = svhn.inference(images)
 
   # Build the portion of the Graph calculating the losses. Note that we will
   # assemble the total_loss using a custom function below.
-  _ = cifar10.loss(logits, labels)
+  _ = svhn.loss(logits, labels)
 
   # Assemble all of the losses for the current tower only.
   losses = tf.get_collection('losses', scope)
@@ -95,7 +71,7 @@ def tower_loss(scope, images, labels):
   for l in losses + [total_loss]:
     # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
     # session. This helps the clarity of presentation on tensorboard.
-    loss_name = re.sub('%s_[0-9]*/' % cifar10.TOWER_NAME, '', l.op.name)
+    loss_name = re.sub('%s_[0-9]*/' % svhn.TOWER_NAME, '', l.op.name)
     tf.summary.scalar(loss_name, l)
 
   return total_loss
@@ -140,7 +116,7 @@ def average_gradients(tower_grads):
 
 
 def train():
-  """Train CIFAR-10 for a number of steps."""
+  """Train SVHN for a number of steps."""
   with tf.Graph().as_default(), tf.device('/cpu:0'):
     # Create a variable to count the number of train() calls. This equals the
     # number of batches processed * FLAGS.num_gpus.
@@ -149,23 +125,25 @@ def train():
         initializer=tf.constant_initializer(0), trainable=False)
 
     # Calculate the learning rate schedule.
-    num_batches_per_epoch = (cifar10.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN /
+    num_batches_per_epoch = (svhn.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN /
                              FLAGS.batch_size)
-    decay_steps = int(num_batches_per_epoch * cifar10.NUM_EPOCHS_PER_DECAY)
+    decay_steps = int(num_batches_per_epoch * svhn.NUM_EPOCHS_PER_DECAY)
 
     # Decay the learning rate exponentially based on the number of steps.
-    lr = tf.train.exponential_decay(cifar10.INITIAL_LEARNING_RATE,
+    lr = tf.train.exponential_decay(svhn.INITIAL_LEARNING_RATE,
                                     global_step,
                                     decay_steps,
-                                    cifar10.LEARNING_RATE_DECAY_FACTOR,
+                                    svhn.LEARNING_RATE_DECAY_FACTOR,
                                     staircase=True)
 
     # Create an optimizer that performs gradient descent.
     opt = tf.train.GradientDescentOptimizer(lr)
 
-    # Get images and labels for CIFAR-10.
-    # images, labels = cifar10.distorted_inputs()
-    iterator = cifar10_input.distorted_inputs(FLAGS.batch_size)
+    # Get images and labels for SVHN.
+    # images, labels = svhn.distorted_inputs()
+    image_batch, label_batch = svhn_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size)
+    # From [N,1] to [N] shaped
+    label_batch = tf.reshape(label_batch, [-1])
 
     # batch_queue = tf.contrib.slim.prefetch_queue.prefetch_queue(
     #       [images, labels], capacity=2 * FLAGS.num_gpus)
@@ -174,12 +152,12 @@ def train():
     with tf.variable_scope(tf.get_variable_scope()):
       for i in xrange(FLAGS.num_gpus):
         with tf.device('/gpu:%d' % i):
-          with tf.name_scope('%s_%d' % (cifar10.TOWER_NAME, i)) as scope:
+          with tf.name_scope('%s_%d' % (svhn.TOWER_NAME, i)) as scope:
             # Dequeues one batch for the GPU
             # image_batch, label_batch = batch_queue.dequeue()
-            image_batch, label_batch = iterator.next_element()
-            # Calculate the loss for one tower of the CIFAR model. This function
-            # constructs the entire CIFAR model but shares the variables across
+
+            # Calculate the loss for one tower of the SVHN model. This function
+            # constructs the entire SVHN model but shares the variables across
             # all towers.
             loss = tower_loss(scope, image_batch, label_batch)
 
@@ -189,7 +167,7 @@ def train():
             # Retain the summaries from the final tower.
             summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
 
-            # Calculate the gradients for the batch of data on this CIFAR tower.
+            # Calculate the gradients for the batch of data on this SVHN tower.
             grads = opt.compute_gradients(loss)
 
             # Keep track of the gradients across all towers.
@@ -216,7 +194,7 @@ def train():
 
     # Track the moving averages of all trainable variables.
     variable_averages = tf.train.ExponentialMovingAverage(
-        cifar10.MOVING_AVERAGE_DECAY, global_step)
+        svhn.MOVING_AVERAGE_DECAY, global_step)
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.
@@ -236,11 +214,8 @@ def train():
         log_device_placement=FLAGS.log_device_placement))
 
     # Build an initialization operation.
-    init = tf.group(tf.global_variables_initializer(), iterator.initializer())
-    # To feed data placeholders for iterator.
-    images, labels = cifar10_input.read_svhn(FLAGS.data_dir, train=True)
-    sess.run(init, feed_dict={images_placeholder: images,
-                              labels_placeholder: labels})
+    init = tf.global_variables_initializer()
+    sess.run(init)
 
     # Start the queue runners.
     # tf.train.start_queue_runners(sess=sess)
@@ -275,7 +250,6 @@ def train():
 
 
 def main(argv=None):  # pylint: disable=unused-argument
-  # cifar10.maybe_download_and_extract()
   if tf.gfile.Exists(FLAGS.train_dir):
     tf.gfile.DeleteRecursively(FLAGS.train_dir)
   tf.gfile.MakeDirs(FLAGS.train_dir)
@@ -284,5 +258,4 @@ def main(argv=None):  # pylint: disable=unused-argument
 
 if __name__ == '__main__':
   FLAGS = parser.parse_args()
-  # import ipdb; ipdb.set_trace()
   tf.app.run(main=main)

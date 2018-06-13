@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
+import math
 
 from datasets import dataset_factory
 from deployment import model_deploy
@@ -26,6 +27,8 @@ from nets import nets_factory
 from preprocessing import preprocessing_factory
 
 slim = tf.contrib.slim
+from tensorflow.contrib.slim.python.slim.learning import train_step
+from tensorflow.python.training.evaluation import _get_or_create_eval_step
 
 tf.app.flags.DEFINE_string(
     'master', '', 'The address of the TensorFlow master to use.')
@@ -54,6 +57,10 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer(
     'num_preprocessing_threads', 4,
     'The number of threads used to create the batches.')
+
+tf.app.flags.DEFINE_integer(
+    'test_every_n_steps', 500,
+    'The frequency with which accuracy metrics should be run.')
 
 tf.app.flags.DEFINE_integer(
     'log_every_n_steps', 10,
@@ -144,7 +151,7 @@ tf.app.flags.DEFINE_float(
     'learning_rate_decay_factor', 0.94, 'Learning rate decay factor.')
 
 tf.app.flags.DEFINE_float(
-    'num_epochs_per_decay', 2.0,
+    'num_epochs_per_decay', 10.0,
     'Number of epochs after which learning rate decays.')
 
 tf.app.flags.DEFINE_bool(
@@ -398,12 +405,16 @@ def main(_):
     # Create global_step
     with tf.device(deploy_config.variables_device()):
       global_step = slim.create_global_step()
+    # Create eval step
+    _get_or_create_eval_step()
 
     ######################
     # Select the dataset #
     ######################
     dataset = dataset_factory.get_dataset(
         FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
+    # test_dataset = dataset_factory.get_dataset(
+    #     FLAGS.dataset_name, 'test', FLAGS.dataset_dir)
 
     ######################
     # Select the network #
@@ -421,10 +432,14 @@ def main(_):
     image_preprocessing_fn = preprocessing_factory.get_preprocessing(
         preprocessing_name,
         is_training=True)
+    # image_test_preprocessing_fn = preprocessing_factory.get_preprocessing(
+    #     preprocessing_name,
+    #     is_training=False)
 
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
+    print('------BATCH SIZE : {}------'.format(FLAGS.batch_size))
     with tf.device(deploy_config.inputs_device()):
       provider = slim.dataset_data_provider.DatasetDataProvider(
           dataset,
@@ -447,6 +462,31 @@ def main(_):
           labels, dataset.num_classes - FLAGS.labels_offset)
       batch_queue = slim.prefetch_queue.prefetch_queue(
           [images, labels], capacity=2 * deploy_config.num_clones)
+
+    # Do the same thing for test dataset
+    # test_provider = slim.dataset_data_provider.DatasetDataProvider(
+    #     test_dataset,
+    #     shuffle=False,
+    #     common_queue_capacity=2 * FLAGS.batch_size,
+    #     common_queue_min=FLAGS.batch_size)
+    # [image_test, label_test] = test_provider.get(['image', 'label'])
+    # label_test -= FLAGS.labels_offset
+    # image_test = image_test_preprocessing_fn(image_test, train_image_size, train_image_size)
+    # images_test, labels_test = tf.train.batch(
+    #     [image_test, label_test],
+    #     batch_size=FLAGS.batch_size,
+    #     num_threads=FLAGS.num_preprocessing_threads,
+    #     capacity=5 * FLAGS.batch_size)
+
+    # Define eval op
+    # logits_test, _ = network_fn(images_test)
+    # predictions_test = tf.argmax(logits_test, 1)
+    # labels_test = tf.squeeze(labels_test)
+    # Define the metrics:
+    # names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
+    #     'Accuracy': slim.metrics.streaming_accuracy(predictions_test, labels_test),
+    #     'Recall_3': slim.metrics.streaming_recall_at_k(logits_test, labels_test, 3),
+    # })
 
     ####################
     # Define the model #
@@ -551,6 +591,32 @@ def main(_):
 
     # Merge all summaries together.
     summary_op = tf.summary.merge(list(summaries), name='summary_op')
+
+    # Define custom train_step_fn to incorporate period test set evaluation
+    # def train_step_fn(session, *args, **kwargs):
+    #   total_loss, should_stop = train_step(session, *args, **kwargs)
+    #   print(train_step_fn.step)
+
+    #   if train_step_fn.step % FLAGS.test_every_n_steps == 0:
+    #     slim.evaluation.evaluate_once(
+    #             master=FLAGS.master,
+    #             checkpoint_path=tf.train.latest_checkpoint(FLAGS.train_dir),
+    #             logdir='/tmp/tfModel/',
+    #             num_evals=math.ceil(test_dataset.num_samples / float(FLAGS.batch_size)),
+    #             eval_op=list(names_to_updates.values()),
+    #             summary_op=None)
+    #             # variables_to_restore=variables_to_restore)
+    #     print('Step {} - Loss: {:.2f} Accuracy: {:.2f}%'.format(str(global_step).rjust(6, '0'), total_loss, accuracy * 100), flush=True)
+
+    #   # if train_step_fn.step == (FLAGS.max_steps - 1):
+    #   #   accuracy = session.run(accuracy_test)
+    #   #   print('FINAL TEST - Loss: {:.2f} Accuracy: {:.2f}%'.format(total_loss, accuracy * 100))
+    #     
+    #   train_step_fn.step += 1
+    #   return [total_loss, should_stop]
+
+    # train_step_fn.step = 0
+    # train_step_fn.accuracy_validation = accuracy_validation
 
 
     ###########################

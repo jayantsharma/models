@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import math
 import tensorflow as tf
+import glob
 
 from datasets import dataset_factory
 from nets import nets_factory
@@ -79,6 +80,9 @@ tf.app.flags.DEFINE_float(
 tf.app.flags.DEFINE_integer(
     'eval_image_size', None, 'Eval image size')
 
+tf.app.flags.DEFINE_integer(
+    'eval_interval_secs', 10, 'Eval time interval (in s)')
+
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -107,6 +111,7 @@ def main(_):
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
+    print('-------BATCH SIZE: {}--------'.format(FLAGS.batch_size))
     provider = slim.dataset_data_provider.DatasetDataProvider(
         dataset,
         shuffle=False,
@@ -153,8 +158,8 @@ def main(_):
     # Define the metrics:
     names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
         'Accuracy': slim.metrics.streaming_accuracy(predictions, labels),
-        'Recall_5': slim.metrics.streaming_recall_at_k(
-            logits, labels, 5),
+        'Recall_2': slim.metrics.streaming_recall_at_k(logits, labels, 2),
+        'Recall_3': slim.metrics.streaming_recall_at_k(logits, labels, 3),
     })
 
     # Print the summaries to screen.
@@ -171,20 +176,40 @@ def main(_):
       # This ensures that we make a single pass over all of the data.
       num_batches = math.ceil(dataset.num_samples / float(FLAGS.batch_size))
 
+    def _eval(checkpoint_path):
+        tf.logging.info('Evaluating %s' % checkpoint_path)
+        slim.evaluation.evaluate_once(
+            master=FLAGS.master,
+            checkpoint_path=checkpoint_path,
+            logdir=FLAGS.eval_dir,
+            num_evals=num_batches,
+            eval_op=list(names_to_updates.values()),
+            variables_to_restore=variables_to_restore)
+
+    def _eval_loop(checkpoint_dir):
+        slim.evaluation.evaluation_loop(
+            master=FLAGS.master,
+            checkpoint_dir=checkpoint_dir,
+            logdir=FLAGS.eval_dir,
+            num_evals=num_batches,
+            eval_op=list(names_to_updates.values()),
+            variables_to_restore=variables_to_restore,
+            eval_interval_secs=FLAGS.eval_interval_secs)
+
     if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
-      checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+      ## LOOP
+      _eval_loop(FLAGS.checkpoint_path)
+
+      ## LATEST CKPT
+      # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+      # _eval(checkpoint_path)
+
+      ## EVAL ALL CKPTS
+      # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
+      # for checkpoint_path in checkpoint_paths:
+      #     _eval('.'.join(checkpoint_path.split('.')[:2]))
     else:
-      checkpoint_path = FLAGS.checkpoint_path
-
-    tf.logging.info('Evaluating %s' % checkpoint_path)
-
-    slim.evaluation.evaluate_once(
-        master=FLAGS.master,
-        checkpoint_path=checkpoint_path,
-        logdir=FLAGS.eval_dir,
-        num_evals=num_batches,
-        eval_op=list(names_to_updates.values()),
-        variables_to_restore=variables_to_restore)
+      _eval(FLAGS.checkpoint_path)
 
 
 if __name__ == '__main__':

@@ -83,6 +83,9 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer(
     'eval_interval_secs', 10, 'Eval time interval (in s)')
 
+tf.app.flags.DEFINE_bool(
+    'quantize', False, 'whether to use quantized graph or not.')
+
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -142,6 +145,9 @@ def main(_):
     # Define the model #
     ####################
     logits, _ = network_fn(images)
+
+    if FLAGS.quantize:
+      tf.contrib.quantize.create_eval_graph()
 
     if FLAGS.moving_average_decay:
       variable_averages = tf.train.ExponentialMovingAverage(

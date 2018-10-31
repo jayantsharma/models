@@ -20,11 +20,13 @@ from __future__ import print_function
 
 import tensorflow as tf
 import math
+import pickle
 
 from datasets import dataset_factory
 from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
+from input_pipeline import input_pipeline
 
 slim = tf.contrib.slim
 from tensorflow.contrib.slim.python.slim.learning import train_step
@@ -434,7 +436,7 @@ def main(_):
     ######################
     network_fn = nets_factory.get_network_fn(
         FLAGS.model_name,
-        num_classes=(dataset.num_classes - FLAGS.labels_offset),
+        num_classes=dataset.num_classes,
         weight_decay=FLAGS.weight_decay,
         is_training=True)
 
@@ -454,6 +456,7 @@ def main(_):
     ##############################################################
     print('------BATCH SIZE : {}------'.format(FLAGS.batch_size))
     with tf.device(deploy_config.inputs_device()):
+      # train_init_op, _, images, labels, num_classes, num_samples = input_pipeline(FLAGS.dataset_dir, FLAGS.batch_size)
       provider = slim.dataset_data_provider.DatasetDataProvider(
           dataset,
           num_readers=FLAGS.num_readers,
@@ -464,7 +467,8 @@ def main(_):
 
       train_image_size = FLAGS.train_image_size or network_fn.default_image_size
 
-      image = image_preprocessing_fn(image, train_image_size, train_image_size)
+      means = pickle.load(open("{}/data_list.pkl".format(FLAGS.dataset_dir), 'rb'))['means']
+      image = image_preprocessing_fn(image, train_image_size, train_image_size, means=means)
 
       images, labels = tf.train.batch(
           [image, label],
@@ -473,6 +477,8 @@ def main(_):
           capacity=5 * FLAGS.batch_size)
       labels = slim.one_hot_encoding(
           labels, dataset.num_classes - FLAGS.labels_offset)
+      # images.set_shape([FLAGS.batch_size] + images.shape.as_list()[1:])
+      # labels.set_shape([FLAGS.batch_size, num_classes])
       batch_queue = slim.prefetch_queue.prefetch_queue(
           [images, labels], capacity=2 * deploy_config.num_clones)
 
@@ -609,6 +615,9 @@ def main(_):
     # Merge all summaries together.
     summary_op = tf.summary.merge(list(summaries), name='summary_op')
 
+    # Define saver - only diff from default is in what ckpts to keep
+    saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.5)
+
     # Define custom train_step_fn to incorporate period test set evaluation
     # def train_step_fn(session, *args, **kwargs):
     #   total_loss, should_stop = train_step(session, *args, **kwargs)
@@ -634,6 +643,9 @@ def main(_):
 
     # train_step_fn.step = 0
     # train_step_fn.accuracy_validation = accuracy_validation
+
+    # with tf.control_dependencies([tf.global_variables_initializer(), train_init_op]):
+    #     init_op = tf.no_op()
 
 
     ###########################

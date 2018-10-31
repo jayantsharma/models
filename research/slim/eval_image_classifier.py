@@ -21,6 +21,7 @@ from __future__ import print_function
 import math
 import tensorflow as tf
 import glob
+import pickle
 
 from datasets import dataset_factory
 from nets import nets_factory
@@ -133,7 +134,8 @@ def main(_):
 
     eval_image_size = FLAGS.eval_image_size or network_fn.default_image_size
 
-    image = image_preprocessing_fn(image, eval_image_size, eval_image_size)
+    means = pickle.load(open("{}/data_list.pkl".format(FLAGS.dataset_dir), 'rb'))['means']
+    image = image_preprocessing_fn(image, eval_image_size, eval_image_size, means=means)
 
     images, labels = tf.train.batch(
         [image, label],
@@ -204,16 +206,16 @@ def main(_):
 
     if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
       ## LOOP
-      _eval_loop(FLAGS.checkpoint_path)
+      # _eval_loop(FLAGS.checkpoint_path)
 
       ## LATEST CKPT
-      # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
-      # _eval(checkpoint_path)
+      checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+      _eval(checkpoint_path)
 
       ## EVAL ALL CKPTS
       # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
       # for checkpoint_path in checkpoint_paths:
-      #     _eval('.'.join(checkpoint_path.split('.')[:2]))
+      #   _eval('.'.join(checkpoint_path.split('.')[:2]))
     else:
       _eval(FLAGS.checkpoint_path)
 

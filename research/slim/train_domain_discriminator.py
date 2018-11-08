@@ -413,7 +413,6 @@ def _get_variables_to_train():
   for scope in scopes:
     variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
     variables_to_train.extend(variables)
-  import ipdb; ipdb.set_trace()
   return variables_to_train
 
 
@@ -516,19 +515,19 @@ def main(_):
     ####################
     # Define the model #
     ####################
-    def clone_fn(batch_queue):
+    def clone_fn(train_batch_queue, test_batch_queue):
       """Allows data parallelism by creating multiple clones of network_fn."""
       train_images, train_domain_labels = train_batch_queue.dequeue()
-      train_features, train_logits, train_end_points = network_fn(train_images, scope='train')
+      train_features, train_logits, train_end_points = network_fn(train_images, scope='train/resnet_v2')
 
       test_images, test_domain_labels = test_batch_queue.dequeue()
-      test_features, test_logits, test_end_points = network_fn(test_images, scope='test')
+      test_features, test_logits, test_end_points = network_fn(test_images, scope='test/resnet_v2')
 
       with tf.variable_scope('domain_discriminator'):
           W = tf.get_variable('weights', shape=[2048, 2],
-                  regularizer=lambda w: 1e-4 * w)
+                  regularizer=slim.l2_regularizer(FLAGS.weight_decay))
           b = tf.get_variable('biases', shape=[2],
-                  regularizer=lambda w: 1e-4 * w)
+                  regularizer=slim.l2_regularizer(FLAGS.weight_decay))
           train_domain_logits = tf.add(tf.matmul(train_features, W), b, name='train_logits')
           test_domain_logits = tf.add(tf.matmul(test_features, W), b, name='test_logits')
 
@@ -612,13 +611,36 @@ def main(_):
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
+    regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    for reg in regs:
+        summaries.add('regularization_losses/' + tf.summary.scalar('/'.join(reg.name.split('/')[:-1]), reg))
+    reg_domains = set([ reg.name.split('/')[0] for reg in regs ])
+    print_ops = []
+    for dom in reg_domains:
+        dom_regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=dom)
+        tot_dom = tf.add_n(dom_regs)
+        # import ipdb; ipdb.set_trace()
+        summary_name = "regularization_losses/total_{}".format(dom)
+        # op = tf.summary.scalar(summary_name, tot_dom, collections=[])
+        tot_dom = tf.Print(tot_dom, [tot_dom], summary_name)
+        print_ops.append(tot_dom)
+        # summaries.add(tf.summary.scalar("regularization_losses/total_{}".format(dom), tot_dom))
+    # train_regression_layer_loss = tf.get_default_graph().get_tensor_by_name('train/resnet_v2/logits/kernel/Regularizer/l2_regularizer/L2Loss:0')
+    # summaries.add(tf.summary.scalar('train_regression_layer_loss', train_regression_layer_loss))
+    # domain_classifier_layer_loss = tf.get_default_graph().get_tensor_by_name('domain_discriminator/weights/Regularizer/mul:0')
+    # summaries.add(tf.summary.scalar('domain_classifier_layer/weightsL2', domain_classifier_layer_loss))
+    # domain_classifier_layer_loss_b = tf.get_default_graph().get_tensor_by_name('domain_discriminator/biases/Regularizer/mul:0')
+    # summaries.add(tf.summary.scalar('domain_classifier_layer/biasesL2', domain_classifier_layer_loss_b))
+    # import ipdb; ipdb.set_trace()
+
     # Create gradient updates.
     grad_updates = optimizer.apply_gradients(clones_gradients,
                                              global_step=global_step)
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    with tf.control_dependencies([update_op]):
+    print_op = tf.group(*print_ops)
+    with tf.control_dependencies([update_op, print_op]):
       train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries

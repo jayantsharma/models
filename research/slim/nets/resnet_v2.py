@@ -211,7 +211,7 @@ def resnet_v2(inputs,
         if global_pool:
           # Global average pooling.
           net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True)
-          features = net
+          features = tf.squeeze(net, [1,2], name='SqueezedFeatures')
           end_points['global_pool'] = net
         if num_classes:
           net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None,

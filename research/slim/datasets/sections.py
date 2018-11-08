@@ -31,9 +31,9 @@ slim = tf.contrib.slim
 
 _FILE_PATTERN = 'sections_%s.tfrecord'
 
-SPLITS_TO_SIZES = {'train': 11337, 'test': 2842}
+SPLITS_TO_SIZES = {'train': 16109, 'test': 4030}
 
-_NUM_CLASSES = 14
+_NUM_CLASSES = 6
 
 _ITEMS_TO_DESCRIPTIONS = {
     'image': 'A [500 x 500 x 3] color image.',

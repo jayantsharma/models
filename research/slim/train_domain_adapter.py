@@ -87,6 +87,9 @@ tf.app.flags.DEFINE_integer(
 ######################
 
 tf.app.flags.DEFINE_float(
+    'adaptation_loss_weight', 1.0, 'Relative weight of adaptation loss vs classification loss')
+
+tf.app.flags.DEFINE_float(
     'weight_decay', 0.00004, 'The weight decay on the model weights.')
 
 tf.app.flags.DEFINE_string(
@@ -491,7 +494,7 @@ def main(_):
       # Specify the loss function #
       #############################
       slim.losses.softmax_cross_entropy(
-          cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=1.0, scope='classification_loss')
+          cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=10.0, scope='classification_loss')
       slim.losses.softmax_cross_entropy(
           domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=1.0, scope='adaptation_loss')
       return end_points

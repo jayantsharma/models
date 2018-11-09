@@ -223,7 +223,11 @@ tf.app.flags.DEFINE_integer('max_number_of_steps', None,
 #####################
 
 tf.app.flags.DEFINE_string(
-    'checkpoint_path', None,
+    'train_checkpoint_path', None,
+    'The path to a checkpoint from which to fine-tune.')
+
+tf.app.flags.DEFINE_string(
+    'test_checkpoint_path', None,
     'The path to a checkpoint from which to fine-tune.')
 
 tf.app.flags.DEFINE_string(
@@ -348,9 +352,6 @@ def _get_init_fn():
   Returns:
     An init function run by the supervisor.
   """
-  if FLAGS.checkpoint_path is None:
-    return None
-
   # Warn the user if a checkpoint exists in the train_dir. Then we'll be
   # ignoring the checkpoint anyway.
   if tf.train.latest_checkpoint(FLAGS.train_dir):
@@ -364,7 +365,6 @@ def _get_init_fn():
     exclusions = [scope.strip()
                   for scope in FLAGS.checkpoint_exclude_scopes.split(',')]
 
-  import ipdb; ipdb.set_trace()
   train_variables_to_restore, test_variables_to_restore = {}, {}
   for var in slim.get_model_variables():
     if var.op.name.startswith('train'):
@@ -373,21 +373,22 @@ def _get_init_fn():
       test_variables_to_restore['/'.join(var.op.name.split('/')[1:])] = var
 
   train_checkpoint_path = tf.train.latest_checkpoint(FLAGS.train_checkpoint_path)
-  test_checkpoint_path = tf.test.latest_checkpoint(FLAGS.test_checkpoint_path)
+  test_checkpoint_path = tf.train.latest_checkpoint(FLAGS.test_checkpoint_path)
 
-  restore_train_vars_op = slim.assign_from_checkpoint_fn(
+  restore_train_vars_fn = slim.assign_from_checkpoint_fn(
                               train_checkpoint_path,
                               train_variables_to_restore,
                               ignore_missing_vars=FLAGS.ignore_missing_vars)
-  restore_test_vars_op = slim.assign_from_checkpoint_fn(
+  restore_test_vars_fn = slim.assign_from_checkpoint_fn(
                               test_checkpoint_path,
                               test_variables_to_restore,
                               ignore_missing_vars=FLAGS.ignore_missing_vars)
-  restore_ops = [restore_train_vars_op, restore_test_vars_op]
-  restore_op = tf.group(*restore_ops)
+  # restore_ops = [restore_train_vars_op, restore_test_vars_op]
+  # restore_op = tf.group(*restore_ops)
 
   def restore_fn(sess):
-      sess.run(restore_op)
+      restore_train_vars_fn(sess)
+      restore_test_vars_fn(sess)
 
   tf.logging.info('Fine-tuning from %s || %s' % (train_checkpoint_path, test_checkpoint_path))
 
@@ -518,10 +519,10 @@ def main(_):
     def clone_fn(train_batch_queue, test_batch_queue):
       """Allows data parallelism by creating multiple clones of network_fn."""
       train_images, train_domain_labels = train_batch_queue.dequeue()
-      train_features, train_logits, train_end_points = network_fn(train_images, scope='train/resnet_v2')
+      train_features, train_logits, train_end_points = network_fn(train_images, scope='train/resnet_v2_152')
 
       test_images, test_domain_labels = test_batch_queue.dequeue()
-      test_features, test_logits, test_end_points = network_fn(test_images, scope='test/resnet_v2')
+      test_features, test_logits, test_end_points = network_fn(test_images, scope='test/resnet_v2_152')
 
       with tf.variable_scope('domain_discriminator'):
           W = tf.get_variable('weights', shape=[2048, 2],
@@ -611,19 +612,18 @@ def main(_):
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
-    regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-    for reg in regs:
-        summaries.add('regularization_losses/' + tf.summary.scalar('/'.join(reg.name.split('/')[:-1]), reg))
-    reg_domains = set([ reg.name.split('/')[0] for reg in regs ])
-    print_ops = []
-    for dom in reg_domains:
-        dom_regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=dom)
-        tot_dom = tf.add_n(dom_regs)
-        # import ipdb; ipdb.set_trace()
-        summary_name = "regularization_losses/total_{}".format(dom)
-        # op = tf.summary.scalar(summary_name, tot_dom, collections=[])
-        tot_dom = tf.Print(tot_dom, [tot_dom], summary_name)
-        print_ops.append(tot_dom)
+    # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    # print_ops = []
+    # for reg in regs:
+    #     summaries.add('regularization_losses/' + tf.summary.scalar('/'.join(reg.name.split('/')[:-1]), reg))
+    # reg_domains = set([ reg.name.split('/')[0] for reg in regs ])
+    # for dom in reg_domains:
+    #     dom_regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=dom)
+    #     tot_dom = tf.add_n(dom_regs)
+    #     summary_name = reg.name
+    #     op = tf.summary.scalar(summary_name, reg, collections=[])
+    #     op = tf.Print(op, [reg], summary_name)
+    #     print_ops.append(op)
         # summaries.add(tf.summary.scalar("regularization_losses/total_{}".format(dom), tot_dom))
     # train_regression_layer_loss = tf.get_default_graph().get_tensor_by_name('train/resnet_v2/logits/kernel/Regularizer/l2_regularizer/L2Loss:0')
     # summaries.add(tf.summary.scalar('train_regression_layer_loss', train_regression_layer_loss))
@@ -639,8 +639,9 @@ def main(_):
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    print_op = tf.group(*print_ops)
-    with tf.control_dependencies([update_op, print_op]):
+    # print_op = tf.group(*print_ops)
+    # with tf.control_dependencies([update_op, print_op]):
+    with tf.control_dependencies([update_op]):
       train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries

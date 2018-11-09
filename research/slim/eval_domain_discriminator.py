@@ -166,8 +166,8 @@ def main(_):
     ####################
     # Define the model #
     ####################
-    train_features, _, _ = network_fn(train_images, scope='train/resnet_v2')
-    test_features, _, _ = network_fn(test_images, scope='test/resnet_v2')
+    train_features, _, _ = network_fn(train_images, scope='train/resnet_v2_152')
+    test_features, _, _ = network_fn(test_images, scope='test/resnet_v2_152')
     with tf.variable_scope('domain_discriminator'):
         W = tf.get_variable('weights', shape=[2048, 2])
         b = tf.get_variable('biases', shape=[2])

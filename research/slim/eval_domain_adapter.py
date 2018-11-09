@@ -92,7 +92,7 @@ FLAGS = tf.app.flags.FLAGS
 
 
 def main(_):
-  if not FLAGS.train_dataset_dir:
+  if not FLAGS.test_dataset_dir:
     raise ValueError('You must supply the dataset directory with --dataset_dir')
 
   tf.logging.set_verbosity(tf.logging.INFO)
@@ -170,8 +170,8 @@ def main(_):
 
     # Define the metrics:
     names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
-        'ClassificationAccuracy': slim.metrics.streaming_accuracy(domain_predictions, domain_labels),
-        'AdaptationAccuracy': slim.metrics.streaming_accuracy(cat_predictions, cat_labels),
+        'AdaptationAccuracy': slim.metrics.streaming_accuracy(domain_predictions, domain_labels),
+        'ClassificationAccuracy': slim.metrics.streaming_accuracy(cat_predictions, cat_labels),
     })
 
     # Print the summaries to screen.
@@ -195,7 +195,7 @@ def main(_):
             checkpoint_path=checkpoint_path,
             logdir=FLAGS.eval_dir,
             num_evals=num_batches,
-            eval_op=list(trn_names_to_updates.values()),
+            eval_op=list(names_to_updates.values()),
             variables_to_restore=variables_to_restore)
 
     def _eval_loop(checkpoint_dir):

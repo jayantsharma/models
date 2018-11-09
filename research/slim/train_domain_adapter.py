@@ -567,13 +567,13 @@ def main(_):
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
-    regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-    print_ops = []
-    for reg in regs:
-        summary_name = reg.name
-        op = tf.summary.scalar(summary_name, reg, collections=[])
-        op = tf.Print(op, [reg], summary_name)
-        print_ops.append(op)
+    # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    # print_ops = []
+    # for reg in regs:
+    #     summary_name = reg.name
+    #     op = tf.summary.scalar(summary_name, reg, collections=[])
+    #     op = tf.Print(op, [reg], summary_name)
+    #     print_ops.append(op)
 
     ### PRINT COMPARE
     # resnet_v2_152/block3/unit_6/bottleneck_v2/conv2/kernel/Regularizer/l2_regularizer:0[0.000394384027]
@@ -587,9 +587,9 @@ def main(_):
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    print_op = tf.group(*print_ops)
-    with tf.control_dependencies([update_op, print_op]):
-    # with tf.control_dependencies([update_op]):
+    # print_op = tf.group(*print_ops)
+    # with tf.control_dependencies([update_op, print_op]):
+    with tf.control_dependencies([update_op]):
       train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries

@@ -494,9 +494,9 @@ def main(_):
       # Specify the loss function #
       #############################
       slim.losses.softmax_cross_entropy(
-          cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=10.0, scope='classification_loss')
+          cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=1.0, scope='classification_loss')
       slim.losses.softmax_cross_entropy(
-          domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=1.0, scope='adaptation_loss')
+          domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.adaptation_loss_weight, scope='adaptation_loss')
       return end_points
 
     # Gather initial summaries.

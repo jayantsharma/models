@@ -211,17 +211,37 @@ def resnet_v2(inputs,
         if global_pool:
           # Global average pooling.
           net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True)
-          features = tf.squeeze(net, [1,2], name='SqueezedFeatures')
+          feature_map = net
           end_points['global_pool'] = net
+
+        res_map = slim.conv2d(feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+                 normalizer_fn=None, scope='domain_adaptation/res1')
+        res_map = slim.conv2d(res_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+                 normalizer_fn=None, scope='domain_adaptation/res2')
+        res_map = slim.conv2d(res_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+                 normalizer_fn=None, scope='domain_adaptation/res3')
+        adapted_feature_map = feature_map + res_map          # adapted_feature_map.shape = [N,1,1,2048]
+
         if num_classes:
-          net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None,
+          net = slim.conv2d(adapted_feature_map, num_classes, [1, 1], activation_fn=None,
                             normalizer_fn=None, scope='logits')
           end_points[sc.name + '/logits'] = net
           if spatial_squeeze:
             net = tf.squeeze(net, [1, 2], name='SpatialSqueeze')
+            cat_logits = net
             end_points[sc.name + '/spatial_squeeze'] = net
           end_points['predictions'] = slim.softmax(net, scope='predictions')
-        return features, net, end_points
+
+        adapted_features = tf.squeeze(adapted_feature_map, [1,2], 'SqueezedAdaptedFeatures')
+
+  with tf.variable_scope('domain_discriminator'):
+      W = tf.get_variable('weights', shape=[2048, 2],
+              regularizer=slim.l2_regularizer(4e-5))
+      b = tf.get_variable('biases', shape=[2],
+              regularizer=slim.l2_regularizer(4e-5))
+      domain_logits = tf.add(tf.matmul(adapted_features, W), b, name='domain_logits')
+
+  return adapted_features, cat_logits, domain_logits, end_points
 resnet_v2.default_image_size = 224
 
 

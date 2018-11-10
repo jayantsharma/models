@@ -375,8 +375,9 @@ def _get_init_fn():
       else:
         variables_to_restore['train/' + var.op.name] = var
     if var.op.name.startswith('domain_discriminator'):
-      variables_to_restore[var] = var
+      variables_to_restore[var.op.name] = var
 
+  # import ipdb; ipdb.set_trace()
   checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
 
   tf.logging.info('Fine-tuning from %s' % (checkpoint_path))

@@ -236,9 +236,11 @@ def resnet_v2(inputs,
 
   with tf.variable_scope('domain_discriminator'):
       W = tf.get_variable('weights', shape=[2048, 2],
-              regularizer=slim.l2_regularizer(4e-5))
+              regularizer=slim.l2_regularizer(4e-5),
+              collections=[tf.GraphKeys.GLOBAL_VARIABLES, tf.GraphKeys.MODEL_VARIABLES])
       b = tf.get_variable('biases', shape=[2],
-              regularizer=slim.l2_regularizer(4e-5))
+              regularizer=slim.l2_regularizer(4e-5),
+              collections=[tf.GraphKeys.GLOBAL_VARIABLES, tf.GraphKeys.MODEL_VARIABLES])
       domain_logits = tf.add(tf.matmul(adapted_features, W), b, name='domain_logits')
 
   return adapted_features, cat_logits, domain_logits, end_points

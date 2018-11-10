@@ -103,7 +103,7 @@ def main(_):
     # Select the dataset #
     ######################
     test_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'train', FLAGS.test_dataset_dir)
+        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.test_dataset_dir)
 
     ####################
     # Select the model #

@@ -510,7 +510,8 @@ def main(_):
     first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
+    # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
+    update_ops = []
 
     # Add summaries for end_points.
     # end_points = clones[0].outputs

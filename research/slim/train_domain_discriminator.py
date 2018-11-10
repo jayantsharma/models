@@ -548,7 +548,9 @@ def main(_):
     first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
+    # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
+    # import ipdb; ipdb.set_trace()
+    update_ops = []
 
     # Add summaries for end_points.
     # end_points = clones[0].outputs
@@ -612,13 +614,13 @@ def main(_):
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
-    regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-    print_ops = []
-    for reg in regs:
-        summary_name = reg.name
-        op = tf.summary.scalar(summary_name, reg, collections=[])
-        op = tf.Print(op, [reg], summary_name)
-        print_ops.append(op)
+    # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    # print_ops = []
+    # for reg in regs:
+    #     summary_name = reg.name
+    #     op = tf.summary.scalar(summary_name, reg, collections=[])
+    #     op = tf.Print(op, [reg], summary_name)
+    #     print_ops.append(op)
 
     # Create gradient updates.
     grad_updates = optimizer.apply_gradients(clones_gradients,
@@ -626,9 +628,9 @@ def main(_):
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    print_op = tf.group(*print_ops)
-    with tf.control_dependencies([update_op, print_op]):
-    # with tf.control_dependencies([update_op]):
+    # print_op = tf.group(*print_ops)
+    # with tf.control_dependencies([update_op, print_op]):
+    with tf.control_dependencies([update_op]):
       train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries

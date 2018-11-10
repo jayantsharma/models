@@ -106,9 +106,9 @@ def main(_):
     # Select the dataset #
     ######################
     train_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, FLAGS.split_name, FLAGS.train_dataset_dir)
+        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.train_dataset_dir)
     test_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, FLAGS.split_name, FLAGS.test_dataset_dir)
+        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.test_dataset_dir)
 
     ####################
     # Select the model #
@@ -167,7 +167,9 @@ def main(_):
     # Define the model #
     ####################
     train_features, train_cat_logits, _ = network_fn(train_images, scope='train/resnet_v2_152')
-    test_features, test_cat_logits, _ = network_fn(test_images, scope='test/resnet_v2_152')
+    ## Since resnet just acts as a feature extractor, makes no diff where you pick the features from
+    ## But for classification accuracy, it does
+    test_features, test_cat_logits, _ = network_fn(test_images, scope='train/resnet_v2_152', reuse=True)
     with tf.variable_scope('domain_discriminator'):
         W = tf.get_variable('weights', shape=[2048, 2])
         b = tf.get_variable('biases', shape=[2])
@@ -226,7 +228,7 @@ def main(_):
             master=FLAGS.master,
             checkpoint_path=checkpoint_path,
             logdir=FLAGS.eval_dir,
-            num_evals=math.ceil(TRAIN_SPLITS_TO_SIZES['train'] / float(FLAGS.batch_size)),
+            num_evals=math.ceil(TRAIN_SPLITS_TO_SIZES[FLAGS.dataset_split_name] / float(FLAGS.batch_size)),
             eval_op=list(trn_names_to_updates.values()),
             variables_to_restore=variables_to_restore)
     def _test_eval(checkpoint_path):
@@ -235,7 +237,7 @@ def main(_):
             master=FLAGS.master,
             checkpoint_path=checkpoint_path,
             logdir=FLAGS.eval_dir,
-            num_evals=math.ceil(TEST_SPLITS_TO_SIZES['train'] / float(FLAGS.batch_size)),
+            num_evals=math.ceil(TEST_SPLITS_TO_SIZES[FLAGS.dataset_split_name] / float(FLAGS.batch_size)),
             eval_op=list(tst_names_to_updates.values()),
             variables_to_restore=variables_to_restore)
 
@@ -261,7 +263,8 @@ def main(_):
       ## EVAL ALL CKPTS
       # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
       # for checkpoint_path in checkpoint_paths:
-      #   _eval('.'.join(checkpoint_path.split('.')[:2]))
+      #   _train_eval('.'.join(checkpoint_path.split('.')[:3]))
+      #   _test_eval('.'.join(checkpoint_path.split('.')[:3]))
     else:
       _eval(FLAGS.checkpoint_path)
 

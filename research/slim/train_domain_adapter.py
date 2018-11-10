@@ -90,7 +90,7 @@ tf.app.flags.DEFINE_float(
     'adaptation_loss_weight', 1.0, 'Relative weight of adaptation loss vs classification loss')
 
 tf.app.flags.DEFINE_float(
-    'classification_loss_weight', 1.0, 'Relative weight of adaptation loss vs classification loss')
+    'classification_loss_weight', 0.0, 'Relative weight of adaptation loss vs classification loss')
 
 tf.app.flags.DEFINE_float(
     'weight_decay', 0.00004, 'The weight decay on the model weights.')
@@ -369,13 +369,9 @@ def _get_init_fn():
 
   variables_to_restore = {}
   for var in slim.get_model_variables():
-    if var.op.name.startswith('resnet_v2_152'):
-      if var.op.name.startswith('resnet_v2_152/domain_adaptation'):
-        pass
-      else:
-        variables_to_restore['train/' + var.op.name] = var
-    if var.op.name.startswith('domain_discriminator'):
-      variables_to_restore[var.op.name] = var
+    if var.op.name.startswith('resnet_v2_152/domain_adapter'):
+      continue
+    variables_to_restore[var.op.name] = var
 
   # import ipdb; ipdb.set_trace()
   checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)

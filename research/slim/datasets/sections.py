@@ -35,7 +35,7 @@ SPLITS_TO_SIZES = {'train': 6088, 'test': 1525}
 TRAIN_SPLITS_TO_SIZES = {'train': 6088, 'test': 1525}
 TEST_SPLITS_TO_SIZES = {'train': 9039, 'test': 2263}
 
-_NUM_CLASSES = 6
+_NUM_CLASSES = 14
 
 _ITEMS_TO_DESCRIPTIONS = {
     'image': 'A [500 x 500 x 3] color image.',

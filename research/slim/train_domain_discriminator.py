@@ -612,26 +612,13 @@ def main(_):
     # Add total_loss to summary.
     summaries.add(tf.summary.scalar('total_loss', total_loss))
 
-    # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-    # print_ops = []
-    # for reg in regs:
-    #     summaries.add('regularization_losses/' + tf.summary.scalar('/'.join(reg.name.split('/')[:-1]), reg))
-    # reg_domains = set([ reg.name.split('/')[0] for reg in regs ])
-    # for dom in reg_domains:
-    #     dom_regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES, scope=dom)
-    #     tot_dom = tf.add_n(dom_regs)
-    #     summary_name = reg.name
-    #     op = tf.summary.scalar(summary_name, reg, collections=[])
-    #     op = tf.Print(op, [reg], summary_name)
-    #     print_ops.append(op)
-        # summaries.add(tf.summary.scalar("regularization_losses/total_{}".format(dom), tot_dom))
-    # train_regression_layer_loss = tf.get_default_graph().get_tensor_by_name('train/resnet_v2/logits/kernel/Regularizer/l2_regularizer/L2Loss:0')
-    # summaries.add(tf.summary.scalar('train_regression_layer_loss', train_regression_layer_loss))
-    # domain_classifier_layer_loss = tf.get_default_graph().get_tensor_by_name('domain_discriminator/weights/Regularizer/mul:0')
-    # summaries.add(tf.summary.scalar('domain_classifier_layer/weightsL2', domain_classifier_layer_loss))
-    # domain_classifier_layer_loss_b = tf.get_default_graph().get_tensor_by_name('domain_discriminator/biases/Regularizer/mul:0')
-    # summaries.add(tf.summary.scalar('domain_classifier_layer/biasesL2', domain_classifier_layer_loss_b))
-    # import ipdb; ipdb.set_trace()
+    regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    print_ops = []
+    for reg in regs:
+        summary_name = reg.name
+        op = tf.summary.scalar(summary_name, reg, collections=[])
+        op = tf.Print(op, [reg], summary_name)
+        print_ops.append(op)
 
     # Create gradient updates.
     grad_updates = optimizer.apply_gradients(clones_gradients,
@@ -639,9 +626,9 @@ def main(_):
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
-    # print_op = tf.group(*print_ops)
-    # with tf.control_dependencies([update_op, print_op]):
-    with tf.control_dependencies([update_op]):
+    print_op = tf.group(*print_ops)
+    with tf.control_dependencies([update_op, print_op]):
+    # with tf.control_dependencies([update_op]):
       train_tensor = tf.identity(total_loss, name='train_op')
 
     # Add the summaries from the first clone. These contain the summaries

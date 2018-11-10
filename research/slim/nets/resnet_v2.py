@@ -211,8 +211,15 @@ def resnet_v2(inputs,
         if global_pool:
           # Global average pooling.
           net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True)
-          features = tf.squeeze(net, [1,2], name='SqueezedFeatures')
           end_points['global_pool'] = net
+
+        domain_net = net
+        domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+                                 normalizer_fn=None, scope='domain_discriminator/layer1')
+        domain_net = slim.conv2d(domain_net, 2, [1,1], activation_fn=None,
+                                 normalizer_fn=None, scope='domain_discriminator/logits')
+        domain_net = tf.squeeze(domain_net, [1,2], name='DomainSpatialSqueeze')
+
         if num_classes:
           net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None,
                             normalizer_fn=None, scope='logits')
@@ -221,7 +228,7 @@ def resnet_v2(inputs,
             net = tf.squeeze(net, [1, 2], name='SpatialSqueeze')
             end_points[sc.name + '/spatial_squeeze'] = net
           end_points['predictions'] = slim.softmax(net, scope='predictions')
-        return features, net, end_points
+        return net, domain_net, end_points
 resnet_v2.default_image_size = 224
 
 

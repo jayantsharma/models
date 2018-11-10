@@ -223,7 +223,7 @@ tf.app.flags.DEFINE_integer('max_number_of_steps', None,
 #####################
 
 tf.app.flags.DEFINE_string(
-    'train_checkpoint_path', None,
+    'checkpoint_path', None,
     'The path to a checkpoint from which to fine-tune.')
 
 tf.app.flags.DEFINE_string(
@@ -365,38 +365,44 @@ def _get_init_fn():
     exclusions = [scope.strip()
                   for scope in FLAGS.checkpoint_exclude_scopes.split(',')]
 
-  train_variables_to_restore, test_variables_to_restore = {}, {}
+  # train_variables_to_restore, test_variables_to_restore = {}, {}
+  # for var in slim.get_model_variables():
+  #   if var.op.name.startswith('train'):
+  #     train_variables_to_restore['/'.join(var.op.name.split('/')[1:])] = var
+  #   if var.op.name.startswith('test'):
+  #     test_variables_to_restore['/'.join(var.op.name.split('/')[1:])] = var
+  variables_to_restore = {}
   for var in slim.get_model_variables():
-    if var.op.name.startswith('train'):
-      train_variables_to_restore['/'.join(var.op.name.split('/')[1:])] = var
-    if var.op.name.startswith('test'):
-      test_variables_to_restore['/'.join(var.op.name.split('/')[1:])] = var
+    if var.op.name.startswith('resnet_v2_152/domain_discriminator'):
+      continue
+    variables_to_restore[var.op.name] = var
 
-  train_checkpoint_path = tf.train.latest_checkpoint(FLAGS.train_checkpoint_path)
-  test_checkpoint_path = tf.train.latest_checkpoint(FLAGS.test_checkpoint_path)
+  # train_checkpoint_path = tf.train.latest_checkpoint(FLAGS.train_checkpoint_path)
+  # test_checkpoint_path = tf.train.latest_checkpoint(FLAGS.test_checkpoint_path)
+  checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
 
-  restore_train_vars_fn = slim.assign_from_checkpoint_fn(
-                              train_checkpoint_path,
-                              train_variables_to_restore,
-                              ignore_missing_vars=FLAGS.ignore_missing_vars)
-  restore_test_vars_fn = slim.assign_from_checkpoint_fn(
-                              test_checkpoint_path,
-                              test_variables_to_restore,
-                              ignore_missing_vars=FLAGS.ignore_missing_vars)
+  # restore_train_vars_fn = slim.assign_from_checkpoint_fn(
+  #                             train_checkpoint_path,
+  #                             train_variables_to_restore,
+  #                             ignore_missing_vars=FLAGS.ignore_missing_vars)
+  # restore_test_vars_fn = slim.assign_from_checkpoint_fn(
+  #                             test_checkpoint_path,
+  #                             test_variables_to_restore,
+  #                             ignore_missing_vars=FLAGS.ignore_missing_vars)
   # restore_ops = [restore_train_vars_op, restore_test_vars_op]
   # restore_op = tf.group(*restore_ops)
 
-  def restore_fn(sess):
-      restore_train_vars_fn(sess)
-      restore_test_vars_fn(sess)
+  # def restore_fn(sess):
+  #     restore_train_vars_fn(sess)
+  #     restore_test_vars_fn(sess)
 
-  tf.logging.info('Fine-tuning from %s || %s' % (train_checkpoint_path, test_checkpoint_path))
+  tf.logging.info('Fine-tuning from %s' % checkpoint_path)
 
-  return restore_fn
-  # return slim.assign_from_checkpoint_fn(
-  #     checkpoint_path,
-  #     variables_to_restore,
-  #     ignore_missing_vars=FLAGS.ignore_missing_vars)
+  # return restore_fn
+  return slim.assign_from_checkpoint_fn(
+      checkpoint_path,
+      variables_to_restore,
+      ignore_missing_vars=FLAGS.ignore_missing_vars)
 
 
 def _get_variables_to_train():
@@ -519,18 +525,10 @@ def main(_):
     def clone_fn(train_batch_queue, test_batch_queue):
       """Allows data parallelism by creating multiple clones of network_fn."""
       train_images, train_domain_labels = train_batch_queue.dequeue()
-      train_features, train_logits, train_end_points = network_fn(train_images, scope='train/resnet_v2_152')
+      _, train_domain_logits, train_end_points = network_fn(train_images, scope='resnet_v2_152')
 
       test_images, test_domain_labels = test_batch_queue.dequeue()
-      test_features, test_logits, test_end_points = network_fn(test_images, scope='test/resnet_v2_152')
-
-      with tf.variable_scope('domain_discriminator'):
-          W = tf.get_variable('weights', shape=[2048, 2],
-                  regularizer=slim.l2_regularizer(FLAGS.weight_decay))
-          b = tf.get_variable('biases', shape=[2],
-                  regularizer=slim.l2_regularizer(FLAGS.weight_decay))
-          train_domain_logits = tf.add(tf.matmul(train_features, W), b, name='train_logits')
-          test_domain_logits = tf.add(tf.matmul(test_features, W), b, name='test_logits')
+      _, test_domain_logits, test_end_points = network_fn(test_images, scope='resnet_v2_152', reuse=True)
 
       #############################
       # Specify the loss function #

@@ -166,15 +166,10 @@ def main(_):
     ####################
     # Define the model #
     ####################
-    train_features, train_cat_logits, _ = network_fn(train_images, scope='train/resnet_v2_152')
+    train_cat_logits, train_domain_logits, _ = network_fn(train_images, scope='resnet_v2_152')
     ## Since resnet just acts as a feature extractor, makes no diff where you pick the features from
     ## But for classification accuracy, it does
-    test_features, test_cat_logits, _ = network_fn(test_images, scope='train/resnet_v2_152', reuse=True)
-    with tf.variable_scope('domain_discriminator'):
-        W = tf.get_variable('weights', shape=[2048, 2])
-        b = tf.get_variable('biases', shape=[2])
-        train_domain_logits = tf.add(tf.matmul(train_features, W), b, name='train_logits')
-        test_domain_logits = tf.add(tf.matmul(test_features, W), b, name='test_logits')
+    test_cat_logits, test_domain_logits, _ = network_fn(test_images, scope='resnet_v2_152', reuse=True)
 
     if FLAGS.quantize:
       tf.contrib.quantize.create_eval_graph()
@@ -262,7 +257,7 @@ def main(_):
 
       ## EVAL ALL CKPTS
       # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
-      # for checkpoint_path in checkpoint_paths:
+      # for checkpoint_path in checkpoint_paths[::2]:
       #   _train_eval('.'.join(checkpoint_path.split('.')[:3]))
       #   _test_eval('.'.join(checkpoint_path.split('.')[:3]))
     else:

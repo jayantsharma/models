@@ -106,9 +106,9 @@ def main(_):
     # Select the dataset #
     ######################
     train_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'train', FLAGS.train_dataset_dir)
+        FLAGS.dataset_name, FLAGS.split_name, FLAGS.train_dataset_dir)
     test_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'train', FLAGS.test_dataset_dir)
+        FLAGS.dataset_name, FLAGS.split_name, FLAGS.test_dataset_dir)
 
     ####################
     # Select the model #
@@ -152,13 +152,13 @@ def main(_):
     test_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.test_dataset_dir), 'rb'))['means']
     test_image = image_preprocessing_fn(test_image, eval_image_size, eval_image_size, means=test_means)
 
-    train_images, train_domain_labels = tf.train.batch(
-        [train_image, train_domain_label],
+    train_images, train_cat_labels, train_domain_labels = tf.train.batch(
+        [train_image, train_label, train_domain_label],
         batch_size=FLAGS.batch_size,
         num_threads=FLAGS.num_preprocessing_threads,
         capacity=5 * FLAGS.batch_size)
-    test_images, test_domain_labels = tf.train.batch(
-        [test_image, test_domain_label],
+    test_images, test_cat_labels, test_domain_labels = tf.train.batch(
+        [test_image, test_label, test_domain_label],
         batch_size=FLAGS.batch_size,
         num_threads=FLAGS.num_preprocessing_threads,
         capacity=5 * FLAGS.batch_size)
@@ -166,8 +166,8 @@ def main(_):
     ####################
     # Define the model #
     ####################
-    train_features, _, _ = network_fn(train_images, scope='train/resnet_v2_152')
-    test_features, _, _ = network_fn(test_images, scope='test/resnet_v2_152')
+    train_features, train_cat_logits, _ = network_fn(train_images, scope='train/resnet_v2_152')
+    test_features, test_cat_logits, _ = network_fn(test_images, scope='test/resnet_v2_152')
     with tf.variable_scope('domain_discriminator'):
         W = tf.get_variable('weights', shape=[2048, 2])
         b = tf.get_variable('biases', shape=[2])
@@ -186,17 +186,19 @@ def main(_):
     else:
       variables_to_restore = slim.get_variables_to_restore()
 
-    train_predictions = tf.argmax(train_domain_logits, 1)
-    train_domain_labels = tf.squeeze(train_domain_labels)
-    test_predictions = tf.argmax(test_domain_logits, 1)
-    test_domain_labels = tf.squeeze(test_domain_labels)
+    train_cat_predictions = tf.argmax(train_cat_logits, 1)
+    train_domain_predictions = tf.argmax(train_domain_logits, 1)
+    test_cat_predictions = tf.argmax(test_cat_logits, 1)
+    test_domain_predictions = tf.argmax(test_domain_logits, 1)
 
     # Define the metrics:
     trn_names_to_values, trn_names_to_updates = slim.metrics.aggregate_metric_map({
-        'TrainAccuracy': slim.metrics.streaming_accuracy(train_predictions, train_domain_labels),
+        'TrainAccuracy': slim.metrics.streaming_accuracy(train_domain_predictions, train_domain_labels),
+        'TrainClassificationAccuracy': slim.metrics.streaming_accuracy(train_cat_predictions, train_cat_labels),
     })
     tst_names_to_values, tst_names_to_updates = slim.metrics.aggregate_metric_map({
-        'TestAccuracy': slim.metrics.streaming_accuracy(test_predictions, test_domain_labels)
+        'TestAccuracy': slim.metrics.streaming_accuracy(test_domain_predictions, test_domain_labels),
+        'TestClassificationAccuracy': slim.metrics.streaming_accuracy(test_cat_predictions, test_cat_labels)
     })
 
     # Print the summaries to screen.

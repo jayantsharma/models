@@ -83,7 +83,7 @@ tf.app.flags.DEFINE_integer(
     'eval_image_size', None, 'Eval image size')
 
 tf.app.flags.DEFINE_integer(
-    'eval_interval_secs', 10, 'Eval time interval (in s)')
+    'eval_interval_secs', 300, 'Eval time interval (in s)')
 
 tf.app.flags.DEFINE_bool(
     'quantize', False, 'whether to use quantized graph or not.')
@@ -204,22 +204,22 @@ def main(_):
             checkpoint_dir=checkpoint_dir,
             logdir=FLAGS.eval_dir,
             num_evals=num_batches,
-            eval_op=list(trn_names_to_updates.values(), tst_names_to_updates.values()),
+            eval_op=list(names_to_updates.values()),
             variables_to_restore=variables_to_restore,
             eval_interval_secs=FLAGS.eval_interval_secs)
 
     if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
       ## LOOP
-      # _eval_loop(FLAGS.checkpoint_path)
+      _eval_loop(FLAGS.checkpoint_path)
 
       ## LATEST CKPT
       # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
       # _eval(checkpoint_path)
 
       ## EVAL ALL CKPTS
-      checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
-      for checkpoint_path in checkpoint_paths[-1:]:
-        _eval('.'.join(checkpoint_path.split('.')[:3]))
+      # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
+      # for checkpoint_path in checkpoint_paths[-1:]:
+      #   _eval('.'.join(checkpoint_path.split('.')[:3]))
     else:
       _eval(FLAGS.checkpoint_path)
 

@@ -213,13 +213,13 @@ def main(_):
       # _eval_loop(FLAGS.checkpoint_path)
 
       ## LATEST CKPT
-      checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
-      _eval(checkpoint_path)
+      # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+      # _eval(checkpoint_path)
 
       ## EVAL ALL CKPTS
-      # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
-      # for checkpoint_path in checkpoint_paths:
-      #   _eval('.'.join(checkpoint_path.split('.')[:3]))
+      checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
+      for checkpoint_path in checkpoint_paths[-1:]:
+        _eval('.'.join(checkpoint_path.split('.')[:3]))
     else:
       _eval(FLAGS.checkpoint_path)
 

@@ -493,8 +493,8 @@ def main(_):
       #############################
       # Specify the loss function #
       #############################
-      slim.losses.softmax_cross_entropy(
-          cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.classification_loss_weight, scope='classification_loss')
+      # slim.losses.softmax_cross_entropy(
+      #     cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.classification_loss_weight, scope='classification_loss')
       slim.losses.softmax_cross_entropy(
           domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.adaptation_loss_weight, scope='adaptation_loss')
       return end_points
@@ -569,7 +569,7 @@ def main(_):
         optimizer,
         var_list=variables_to_train)
     # Add total_loss to summary.
-    summaries.add(tf.summary.scalar('total_loss', total_loss))
+    summaries.add(tf.summary.scalar('Losses/total_loss', total_loss))
 
     # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
     # print_ops = []

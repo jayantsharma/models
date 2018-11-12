@@ -150,4 +150,4 @@ def run(dataset_dir):
 
 
 if __name__ == '__main__':
-    run('/mnt/grocery_data/Traderjoe/StPaul/sectioning_scaled_all')
+    run('/mnt/grocery_data/Traderjoe/StLouis/sectioning_scaled')

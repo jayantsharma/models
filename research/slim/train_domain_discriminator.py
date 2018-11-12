@@ -610,7 +610,7 @@ def main(_):
         optimizer,
         var_list=variables_to_train)
     # Add total_loss to summary.
-    summaries.add(tf.summary.scalar('total_loss', total_loss))
+    summaries.add(tf.summary.scalar('Losses/total_loss', total_loss))
 
     # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
     # print_ops = []

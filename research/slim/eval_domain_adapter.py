@@ -149,7 +149,7 @@ def main(_):
     ####################
     # Define the model #
     ####################
-    adapted_features, cat_logits, domain_logits, end_points = network_fn(images)
+    adapted_features, cat_logits, domain_logits, end_points, _, _ = network_fn(images)
 
     if FLAGS.quantize:
       tf.contrib.quantize.create_eval_graph()

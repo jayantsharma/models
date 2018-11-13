@@ -224,6 +224,14 @@ def resnet_v2(inputs,
         #          normalizer_fn=None, scope='domain_adapter/res3')
         adapted_feature_map = feature_map + res_map
 
+        reconstruct_res_map = slim.conv2d(adapted_feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+                             normalizer_fn=None, scope='domain_reconstructor/res1')
+        reconstructed_feature_map = adapted_feature_map + reconstruct_res_map
+
+        features = tf.squeeze(feature_map, [1,2], 'SqueezedFeatures')
+        adapted_features = tf.squeeze(adapted_feature_map, [1,2], 'SqueezedAdaptedFeatures')
+        reconstructed_features = tf.squeeze(reconstructed_feature_map, [1,2], 'SqueezedReconstructedFeatures')
+
         domain_net = adapted_feature_map
         domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
                                  normalizer_fn=None, scope='domain_discriminator/layer1')
@@ -242,9 +250,7 @@ def resnet_v2(inputs,
             end_points[sc.name + '/spatial_squeeze'] = net
           end_points['predictions'] = slim.softmax(net, scope='predictions')
 
-        adapted_features = tf.squeeze(adapted_feature_map, [1,2], 'SqueezedAdaptedFeatures')
-
-  return adapted_features, cat_logits, domain_logits, end_points
+  return adapted_features, cat_logits, domain_logits, end_points, reconstructed_features, features
 resnet_v2.default_image_size = 224
 
 

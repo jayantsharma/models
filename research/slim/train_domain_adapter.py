@@ -90,6 +90,9 @@ tf.app.flags.DEFINE_float(
     'adaptation_loss_weight', 1.0, 'Relative weight of adaptation loss vs classification loss')
 
 tf.app.flags.DEFINE_float(
+    'reconstruction_loss_weight', 1.0, 'Relative weight of reconstruction loss vs adaptation loss')
+
+tf.app.flags.DEFINE_float(
     'classification_loss_weight', 0.0, 'Relative weight of adaptation loss vs classification loss')
 
 tf.app.flags.DEFINE_float(
@@ -488,7 +491,7 @@ def main(_):
     def clone_fn(batch_queue):
       """Allows data parallelism by creating multiple clones of network_fn."""
       images, cat_labels, domain_labels = batch_queue.dequeue()
-      adapted_features, cat_logits, domain_logits, end_points = network_fn(images)
+      adapted_features, cat_logits, domain_logits, end_points, reconstructed_features, features = network_fn(images)
 
       #############################
       # Specify the loss function #
@@ -497,6 +500,8 @@ def main(_):
       #     cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.classification_loss_weight, scope='classification_loss')
       slim.losses.softmax_cross_entropy(
           domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.adaptation_loss_weight, scope='adaptation_loss')
+      slim.losses.mean_squared_error(
+          reconstructed_features, features, weights=FLAGS.reconstruction_loss_weight, scope='reconstruction_loss')
       return end_points
 
     # Gather initial summaries.
@@ -519,7 +524,7 @@ def main(_):
 
     # Add summaries for losses.
     for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
-      summaries.add(tf.summary.scalar('losses/%s' % loss.op.name, loss))
+      summaries.add(tf.summary.scalar('Losses/%s' % loss.op.name, loss))
 
     # Add summaries for variables.
     for variable in slim.get_model_variables():

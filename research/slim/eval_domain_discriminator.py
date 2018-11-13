@@ -261,7 +261,8 @@ def main(_):
       #   _train_eval('.'.join(checkpoint_path.split('.')[:3]))
       #   _test_eval('.'.join(checkpoint_path.split('.')[:3]))
     else:
-      _eval(FLAGS.checkpoint_path)
+      _train_eval(FLAGS.checkpoint_path)
+      _test_eval(FLAGS.checkpoint_path)
 
 
 if __name__ == '__main__':

@@ -216,6 +216,8 @@ def resnet_v2(inputs,
         domain_net = net
         domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
                                  normalizer_fn=None, scope='domain_discriminator/layer1')
+        # domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+        #                          normalizer_fn=None, scope='domain_discriminator/layer2')
         domain_net = slim.conv2d(domain_net, 2, [1,1], activation_fn=None,
                                  normalizer_fn=None, scope='domain_discriminator/logits')
         domain_net = tf.squeeze(domain_net, [1,2], name='DomainSpatialSqueeze')

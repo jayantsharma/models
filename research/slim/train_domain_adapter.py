@@ -372,7 +372,7 @@ def _get_init_fn():
 
   variables_to_restore = {}
   for var in slim.get_model_variables():
-    if var.op.name.startswith('resnet_v2_152/domain_adapter'):
+    if var.op.name.startswith('resnet_v2_152/domain_adapter') or var.op.name.startswith('resnet_v2_152/domain_reconstructor'):
       continue
     variables_to_restore[var.op.name] = var
 

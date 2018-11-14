@@ -32,11 +32,11 @@ slim = tf.contrib.slim
 _FILE_PATTERN = 'sections_%s.tfrecord'
 
 # SPLITS_TO_SIZES = {'train': 6088, 'test': 1525}
-SPLITS_TO_SIZES = {'train': 9039, 'test': 2263}         # StPaul is test here
+SPLITS_TO_SIZES = {'train': 6781, 'test': 1697}         # StLouis is test here
 TRAIN_SPLITS_TO_SIZES = {'train': 6088, 'test': 1525}
 TEST_SPLITS_TO_SIZES = {'train': 9039, 'test': 2263}
 
-_NUM_CLASSES = 14 
+_NUM_CLASSES = 6
 
 _ITEMS_TO_DESCRIPTIONS = {
     'image': 'A [500 x 500 x 3] color image.',

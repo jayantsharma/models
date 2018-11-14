@@ -216,7 +216,7 @@ def resnet_v2(inputs,
 
         # res_map = slim.dropout(feature_map, keep_prob=0.1)
         res_map = slim.conv2d(feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
-                 weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e+0, scale_l2=1e+0),
+                 # weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e+0, scale_l2=1e+0),
                  normalizer_fn=None, scope='domain_adapter/res1')
         # res_map = slim.conv2d(res_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
         #          normalizer_fn=None, scope='domain_adapter/res2')

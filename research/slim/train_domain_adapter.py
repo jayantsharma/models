@@ -377,7 +377,8 @@ def _get_init_fn():
     variables_to_restore[var.op.name] = var
 
   # import ipdb; ipdb.set_trace()
-  checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+  # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+  checkpoint_path = FLAGS.checkpoint_path
 
   tf.logging.info('Fine-tuning from %s' % (checkpoint_path))
 

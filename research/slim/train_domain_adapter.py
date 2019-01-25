@@ -99,7 +99,7 @@ tf.app.flags.DEFINE_float(
     'weight_decay', 0.00004, 'The weight decay on the model weights.')
 
 tf.app.flags.DEFINE_string(
-    'optimizer', 'rmsprop',
+    'optimizer', 'momentum',
     'The name of the optimizer, one of "adadelta", "adagrad", "adam",'
     '"ftrl", "momentum", "sgd" or "rmsprop".')
 
@@ -219,12 +219,12 @@ tf.app.flags.DEFINE_string(
     'as `None`, then the model_name flag is used.')
 
 tf.app.flags.DEFINE_integer(
-    'batch_size', 32, 'The number of samples in each batch.')
+    'batch_size', 64, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
     'train_image_size', None, 'Train image size')
 
-tf.app.flags.DEFINE_integer('max_number_of_steps', None,
+tf.app.flags.DEFINE_integer('max_number_of_steps', 10. ** 5,
                             'The maximum number of training steps.')
 
 #####################
@@ -407,8 +407,12 @@ def _get_variables_to_train():
 
 
 def main(_):
-  if not FLAGS.test_dataset_dir:
-    raise ValueError('You must supply the dataset directory with --test_dataset_dir')
+  if not FLAGS.source_dataset_dir:
+    raise ValueError('You must supply the dataset directory with --source_dataset_dir')
+  if not FLAGS.target_dataset_dir:
+    raise ValueError('You must supply the dataset directory with --target_dataset_dir')
+  if not FLAGS.max_number_of_steps:
+    raise ValueError('You must supply maximum number of steps')
 
   tf.logging.set_verbosity(tf.logging.INFO)
   with tf.Graph().as_default():
@@ -431,8 +435,10 @@ def main(_):
     ######################
     # Select datasets #
     ######################
-    test_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'train', FLAGS.test_dataset_dir)
+    source_dataset = dataset_factory.get_dataset(
+        FLAGS.dataset_name, 'train', FLAGS.source_dataset_dir)
+    target_dataset = dataset_factory.get_dataset(
+        FLAGS.dataset_name, 'test', FLAGS.target_dataset_dir)
 
     ######################
     # Select the network #
@@ -454,61 +460,79 @@ def main(_):
     ##############################################################
     # Create a dataset provider that loads data from the dataset #
     ##############################################################
-    print('------BATCH SIZE : {}------'.format(FLAGS.batch_size))
-    train_domain_label, test_domain_label = 0, 1
+    source_domain_label, target_domain_label = 0, 1
     with tf.device(deploy_config.inputs_device()):
-      test_provider = slim.dataset_data_provider.DatasetDataProvider(
-          test_dataset,
-          shuffle=False,
+      source_provider = slim.dataset_data_provider.DatasetDataProvider(
+          source_dataset,
+          common_queue_capacity=2 * FLAGS.batch_size,
+          common_queue_min=FLAGS.batch_size)
+      target_provider = slim.dataset_data_provider.DatasetDataProvider(
+          target_dataset,
           common_queue_capacity=2 * FLAGS.batch_size,
           common_queue_min=FLAGS.batch_size)
 
-      [test_image, test_cat_label] = test_provider.get(['image', 'label'])
-      test_cat_label -= FLAGS.labels_offset
+      [source_image, source_class_label] = source_provider.get(['image', 'label'])
+      [target_image, target_class_label] = target_provider.get(['image', 'label'])
 
-      test_image_size = FLAGS.train_image_size or network_fn.default_image_size
+      image_size = FLAGS.train_image_size or network_fn.default_image_size
 
-      test_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.test_dataset_dir), 'rb'))['means']
-      test_image = image_preprocessing_fn(test_image, test_image_size, test_image_size, means=test_means)
+      source_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.source_dataset_dir), 'rb'))['means']
+      target_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.target_dataset_dir), 'rb'))['means']
 
-      # IMP - adapter should be able to transfer the domain label while preserving semantics. This means:
-      #    1. cat label stays same
-      #    2. domain label flips (test_domain_label -> train_domain_label)
-      images, cat_labels, domain_labels = tf.train.batch(
-          [test_image, test_cat_label, train_domain_label],
+      source_image = image_preprocessing_fn(source_image, image_size, image_size, means=source_means)
+      target_image = image_preprocessing_fn(target_image, image_size, image_size, means=target_means)
+
+      source_images, source_class_labels, source_domain_labels = tf.train.batch(
+          [source_image, source_class_label, source_domain_label],
+          batch_size=FLAGS.batch_size,
+          num_threads=FLAGS.num_preprocessing_threads,
+          capacity=5 * FLAGS.batch_size)
+      target_images, target_class_labels, target_domain_labels = tf.train.batch(
+          [target_image, target_class_label, target_domain_label],
           batch_size=FLAGS.batch_size,
           num_threads=FLAGS.num_preprocessing_threads,
           capacity=5 * FLAGS.batch_size)
 
-      cat_labels = slim.one_hot_encoding(cat_labels, test_dataset.num_classes)
-      domain_labels = slim.one_hot_encoding(domain_labels, 2)
+      source_class_labels = slim.one_hot_encoding(source_class_labels, source_dataset.num_classes)
+      source_domain_labels = slim.one_hot_encoding(source_domain_labels, 2)
+      target_domain_labels = slim.one_hot_encoding(target_domain_labels, 2)
 
-      batch_queue = slim.prefetch_queue.prefetch_queue(
-          [images, cat_labels, domain_labels], capacity=2 * deploy_config.num_clones)
+      source_batch_queue = slim.prefetch_queue.prefetch_queue(
+          [source_images, source_class_labels, source_domain_labels], capacity=2 * deploy_config.num_clones)
+      target_batch_queue = slim.prefetch_queue.prefetch_queue(
+          [target_images, target_class_labels, target_domain_labels], capacity=2 * deploy_config.num_clones)
+
+    # var for measuring training progress
+    p = tf.divide(global_step, FLAGS.max_number_of_steps)
+    # goes from 0 to 1 as training progress to supress noisy domain signal during initial training phase
+    domain_adaptation_weight = 2. / (1. + tf.exp(-10. * p))
 
     ####################
     # Define the model #
     ####################
-    def clone_fn(batch_queue):
+    def clone_fn(source_batch_queue, target_batch_queue):
       """Allows data parallelism by creating multiple clones of network_fn."""
-      images, cat_labels, domain_labels = batch_queue.dequeue()
-      adapted_features, cat_logits, domain_logits, end_points, reconstructed_features, features = network_fn(images)
+      source_images, source_class_labels, source_domain_labels  = source_batch_queue.dequeue()
+      target_images, _, target_domain_labels  = target_batch_queue.dequeue()
+
+      _, source_class_logits, source_domain_logits = network_fn(source_images, domain_adaptation_weight, scope='main')
+      _, _, target_domain_logits = network_fn(target_images, domain_adaptation_weight, reuse=True, scope='main')
 
       #############################
       # Specify the loss function #
       #############################
-      # slim.losses.softmax_cross_entropy(
-      #     cat_logits, cat_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.classification_loss_weight, scope='classification_loss')
       slim.losses.softmax_cross_entropy(
-          domain_logits, domain_labels, label_smoothing=FLAGS.label_smoothing, weights=FLAGS.adaptation_loss_weight, scope='adaptation_loss')
-      slim.losses.mean_squared_error(
-          reconstructed_features, features, weights=FLAGS.reconstruction_loss_weight, scope='reconstruction_loss')
+          source_class_logits, source_class_labels, scope='source_classification_loss')
+      slim.losses.softmax_cross_entropy(
+          source_domain_logits, source_domain_labels, scope='source_domain_adaptation_loss')
+      slim.losses.softmax_cross_entropy(
+          target_domain_logits, target_domain_labels, scope='target_domain_adaptation_loss')
       return end_points
 
     # Gather initial summaries.
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
 
-    clones = model_deploy.create_clones(deploy_config, clone_fn, [batch_queue])
+    clones = model_deploy.create_clones(deploy_config, clone_fn, [source_batch_queue, target_batch_queue])
     first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
@@ -525,7 +549,11 @@ def main(_):
 
     # Add summaries for losses.
     for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
+      if loss.op.name.find('domain_adaptation_loss') > 0:
+        continue
       summaries.add(tf.summary.scalar('Losses/%s' % loss.op.name, loss))
+    summaries.add(tf.summary.scalar('Losses/domain_adaptation_loss', 
+        tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES, 'domain_adaptation_loss'))))
 
     # Add summaries for variables.
     for variable in slim.get_model_variables():
@@ -549,7 +577,8 @@ def main(_):
     # Configure the optimization procedure. #
     #########################################
     with tf.device(deploy_config.optimizer_device()):
-      learning_rate = _configure_learning_rate(test_dataset.num_samples, global_step)
+      # learning_rate = _configure_learning_rate(test_dataset.num_samples, global_step)
+      learning_rate = 1e-2 / ((1. + 10 * p) ** 0.75)
       optimizer = _configure_optimizer(learning_rate)
       summaries.add(tf.summary.scalar('learning_rate', learning_rate))
 

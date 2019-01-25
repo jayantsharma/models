@@ -109,6 +109,7 @@ def bottleneck(inputs, depth, depth_bottleneck, stride, rate=1,
 
 
 def resnet_v2(inputs,
+              domain_adaptation_weight,
               blocks,
               num_classes=None,
               is_training=True,
@@ -211,47 +212,65 @@ def resnet_v2(inputs,
         if global_pool:
           # Global average pooling.
           net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True)
-          feature_map = net
+          # feature_map = net
           end_points['global_pool'] = net
 
         # res_map = slim.dropout(feature_map, keep_prob=0.1)
-        res_map = slim.conv2d(feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
-                  weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e-2, scale_l2=1e-2),
-                  normalizer_fn=None, scope='domain_adapter/res1')
+        # res_map = slim.conv2d(feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+        #           weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e-2, scale_l2=1e-2),
+        #           normalizer_fn=None, scope='domain_adapter/res1')
         # res_map = slim.conv2d(res_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
         #          normalizer_fn=None, scope='domain_adapter/res2')
         # res_map = slim.conv2d(res_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
         #          normalizer_fn=None, scope='domain_adapter/res3')
-        adapted_feature_map = feature_map + res_map
+        # adapted_feature_map = feature_map + res_map
 
-        reconstruct_res_map = slim.conv2d(adapted_feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
-                              weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e-2, scale_l2=1e-2),
-                              normalizer_fn=None, scope='domain_reconstructor/res1')
-        reconstructed_feature_map = adapted_feature_map + reconstruct_res_map
+        # reconstruct_res_map = slim.conv2d(adapted_feature_map, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+        #                       weights_regularizer=slim.l1_l2_regularizer(scale_l1=1e-2, scale_l2=1e-2),
+        #                       normalizer_fn=None, scope='domain_reconstructor/res1')
+        # reconstructed_feature_map = adapted_feature_map + reconstruct_res_map
 
-        features = tf.squeeze(feature_map, [1,2], 'SqueezedFeatures')
-        adapted_features = tf.squeeze(adapted_feature_map, [1,2], 'SqueezedAdaptedFeatures')
-        reconstructed_features = tf.squeeze(reconstructed_feature_map, [1,2], 'SqueezedReconstructedFeatures')
+        # features = tf.squeeze(feature_map, [1,2], 'SqueezedFeatures')
+        # adapted_features = tf.squeeze(adapted_feature_map, [1,2], 'SqueezedAdaptedFeatures')
+        # reconstructed_features = tf.squeeze(reconstructed_feature_map, [1,2], 'SqueezedReconstructedFeatures')
 
-        domain_net = adapted_feature_map
-        domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
-                                 normalizer_fn=None, scope='domain_discriminator/layer1')
-        domain_net = slim.conv2d(domain_net, 2, [1,1], activation_fn=None,
-                                 normalizer_fn=None, scope='domain_discriminator/logits')
-        domain_net = tf.squeeze(domain_net, [1,2], name='DomainSpatialSqueeze')
-        domain_logits = domain_net
+        # domain_net = adapted_feature_map
+        # domain_net = slim.conv2d(domain_net, net.shape[-1], [1,1], activation_fn=tf.nn.relu,
+        #                          normalizer_fn=None, scope='domain_discriminator/layer1')
+        # domain_net = slim.conv2d(domain_net, 2, [1,1], activation_fn=None,
+        #                          normalizer_fn=None, scope='domain_discriminator/logits')
+        # domain_net = tf.squeeze(domain_net, [1,2], name='DomainSpatialSqueeze')
+        # domain_logits = domain_net
+
+        domain_net = net
+        with tf.variable_scope('domain_adaptation'):
+            @ops.RegisterGradient('GradientReversal')
+            def _flip_gradients(op, grad):
+                return [tf.negative(grad) * domain_adaptation_weight]
+        
+            g = tf.get_default_graph()
+            with g.gradient_override_map({"Identity": 'GradientReversal'}):
+                domain_net = tf.identity(domain_net, name='gradient_reversal')
+
+            domain_net = slim.conv2d(domain_net, 1024, [1,1], activation_fn=tf.nn.relu,
+                                   normalizer_fn=None, scope='layer1')
+            domain_net = slim.conv2d(domain_net, 1024, [1,1], activation_fn=tf.nn.relu,
+                                   normalizer_fn=None, scope='layer2')
+            domain_net = slim.conv2d(domain_net, 2, [1,1], activation_fn=None,
+                                   normalizer_fn=None, scope='logits')
+            domain_net = tf.squeeze(domain_net, [1, 2], name='SpatialSqueeze')
 
         if num_classes:
-          net = slim.conv2d(adapted_feature_map, num_classes, [1, 1], activation_fn=None,
+          net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None,
                             normalizer_fn=None, scope='logits')
           end_points[sc.name + '/logits'] = net
           if spatial_squeeze:
             net = tf.squeeze(net, [1, 2], name='SpatialSqueeze')
-            cat_logits = net
+            # cat_logits = net
             end_points[sc.name + '/spatial_squeeze'] = net
           end_points['predictions'] = slim.softmax(net, scope='predictions')
 
-  return adapted_features, cat_logits, domain_logits, end_points, reconstructed_features, features
+  return end_points, net, domain_net
 resnet_v2.default_image_size = 224
 
 

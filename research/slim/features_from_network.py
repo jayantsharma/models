@@ -110,7 +110,7 @@ def main(_):
     ####################
     network_fn = nets_factory.get_network_fn(
         FLAGS.model_name,
-        num_classes=(dataset.num_classes - FLAGS.labels_offset),
+        num_classes=None,
         is_training=False)
 
     ##############################################################
@@ -211,7 +211,7 @@ def main(_):
     #   # _eval_loop(FLAGS.checkpoint_path)
 
     #   ## LATEST CKPT
-    checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+    # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
     #   _eval(checkpoint_path)
     saver = tf.train.Saver()
 
@@ -227,8 +227,7 @@ def main(_):
     # cats.pop(ff_idx)
     # cats = ["vegetables"]
     with tf.Session() as sess:
-        print("Restoring model params from {}".format(checkpoint_path))
-        saver.restore(sess, checkpoint_path)
+        saver.restore(sess, FLAGS.checkpoint_path)
         for cat in cats:
             print("------------------- {} -------------------".format(cat.upper()))
             imgfiles = glob.glob("{}/{}/tmpl*jpg".format(FLAGS.dataset_dir, cat))
@@ -238,7 +237,7 @@ def main(_):
                 lgts, ftrs = sess.run([logits, features], feed_dict={ raw_image: I })
                 feature_dump = { 'logits': lgts, 'features': ftrs }
                 pickle.dump(feature_dump, 
-                        open("{}/{}/features_{}.pkl".format(FLAGS.dataset_dir, cat, imgfile.split('/')[-1][6:-4]), 
+                        open("{}/{}/minnetonka_resnet_features_{}.pkl".format(FLAGS.dataset_dir, cat, imgfile.split('/')[-1][6:-4]), 
                             "wb"))
                 if i % 100 == 0:
                     print("{}/{}".format(i,num_imgfiles))

@@ -21,12 +21,14 @@ from __future__ import print_function
 import tensorflow as tf
 import math
 import pickle
+from tensorflow.python import debug as tf_debug
 
 from datasets import dataset_factory
 from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
 from input_pipeline import input_pipeline
+from dann import revgrad
 
 slim = tf.contrib.slim
 from tensorflow.contrib.slim.python.slim.learning import train_step
@@ -72,11 +74,11 @@ tf.app.flags.DEFINE_integer(
     'The frequency with which logs are print.')
 
 tf.app.flags.DEFINE_integer(
-    'save_summaries_secs', 600,
+    'save_summaries_secs', 60,
     'The frequency with which summaries are saved, in seconds.')
 
 tf.app.flags.DEFINE_integer(
-    'save_interval_secs', 600,
+    'save_interval_secs', 300,
     'The frequency with which the model is saved, in seconds.')
 
 tf.app.flags.DEFINE_integer(
@@ -99,7 +101,7 @@ tf.app.flags.DEFINE_float(
     'weight_decay', 0.00004, 'The weight decay on the model weights.')
 
 tf.app.flags.DEFINE_string(
-    'optimizer', 'momentum',
+    'optimizer', 'sgd',
     'The name of the optimizer, one of "adadelta", "adagrad", "adam",'
     '"ftrl", "momentum", "sgd" or "rmsprop".')
 
@@ -199,11 +201,14 @@ tf.app.flags.DEFINE_string(
 tf.app.flags.DEFINE_string(
     'dataset_split_name', 'train', 'The name of the train/test split.')
 
-# tf.app.flags.DEFINE_string(
-#     'train_dataset_dir', None, 'The directory where the train dataset files are stored.')
+tf.app.flags.DEFINE_integer(
+    'num_classes', 6, 'Number of classes in the dataset.')
 
 tf.app.flags.DEFINE_string(
-    'test_dataset_dir', None, 'The directory where the test dataset files are stored.')
+    'source_dataset_files', None, 'The directory where the source dataset files are stored.')
+
+tf.app.flags.DEFINE_string(
+    'target_dataset_file', None, 'The directory where the target dataset files are stored.')
 
 tf.app.flags.DEFINE_integer(
     'labels_offset', 0,
@@ -219,12 +224,12 @@ tf.app.flags.DEFINE_string(
     'as `None`, then the model_name flag is used.')
 
 tf.app.flags.DEFINE_integer(
-    'batch_size', 64, 'The number of samples in each batch.')
+    'batch_size', 256, 'The number of samples in each batch.')
 
 tf.app.flags.DEFINE_integer(
     'train_image_size', None, 'Train image size')
 
-tf.app.flags.DEFINE_integer('max_number_of_steps', 10. ** 5,
+tf.app.flags.DEFINE_integer('max_number_of_steps', 10 ** 5,
                             'The maximum number of training steps.')
 
 #####################
@@ -406,11 +411,31 @@ def _get_variables_to_train():
   return variables_to_train
 
 
+def _get_parser(domain):
+    if domain not in ['source', 'target']:
+        raise ValueError('Domain must be source/target')
+    dlbl = 0 if domain == 'source' else 1
+
+    def _parse_example(serialized_record):
+        features = tf.parse_single_example(serialized_record,
+            features={
+                'feature_map': tf.FixedLenFeature([], tf.string),
+                'label': tf.FixedLenFeature([], tf.int64),
+            }, name='features')
+
+        feature_map = tf.decode_raw(features['feature_map'], tf.float32)
+        class_label = slim.one_hot_encoding(features['label'], FLAGS.num_classes)
+        domain_label = slim.one_hot_encoding(dlbl, 2)
+
+        return feature_map, class_label, domain_label
+    return _parse_example
+
+
 def main(_):
-  if not FLAGS.source_dataset_dir:
-    raise ValueError('You must supply the dataset directory with --source_dataset_dir')
-  if not FLAGS.target_dataset_dir:
-    raise ValueError('You must supply the dataset directory with --target_dataset_dir')
+  if not FLAGS.source_dataset_files:
+    raise ValueError('You must supply the dataset directory with --source_dataset_files')
+  if not FLAGS.target_dataset_file:
+    raise ValueError('You must supply the dataset directory with --target_dataset_file')
   if not FLAGS.max_number_of_steps:
     raise ValueError('You must supply maximum number of steps')
 
@@ -433,90 +458,45 @@ def main(_):
     _get_or_create_eval_step()
 
     ######################
-    # Select datasets #
+    # Declare datasets #
     ######################
-    source_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'train', FLAGS.source_dataset_dir)
-    target_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, 'test', FLAGS.target_dataset_dir)
-
-    ######################
-    # Select the network #
-    ######################
-    network_fn = nets_factory.get_network_fn(
-        FLAGS.model_name,
-        num_classes=test_dataset.num_classes,
-        weight_decay=FLAGS.weight_decay,
-        is_training=True)
-
-    #####################################
-    # Select the preprocessing function #
-    #####################################
-    preprocessing_name = FLAGS.preprocessing_name or FLAGS.model_name
-    image_preprocessing_fn = preprocessing_factory.get_preprocessing(
-        preprocessing_name,
-        is_training=True)
-
-    ##############################################################
-    # Create a dataset provider that loads data from the dataset #
-    ##############################################################
-    source_domain_label, target_domain_label = 0, 1
     with tf.device(deploy_config.inputs_device()):
-      source_provider = slim.dataset_data_provider.DatasetDataProvider(
-          source_dataset,
-          common_queue_capacity=2 * FLAGS.batch_size,
-          common_queue_min=FLAGS.batch_size)
-      target_provider = slim.dataset_data_provider.DatasetDataProvider(
-          target_dataset,
-          common_queue_capacity=2 * FLAGS.batch_size,
-          common_queue_min=FLAGS.batch_size)
+      source_filenames = eval(FLAGS.source_dataset_files)
+      source_dataset = tf.data.TFRecordDataset(source_filenames)
+      source_dataset = source_dataset.shuffle(buffer_size=5000)
+      source_dataset = source_dataset.repeat()
+      source_dataset = source_dataset.map(_get_parser('source'))
+      source_dataset = source_dataset.batch(FLAGS.batch_size)
+      source_iterator = source_dataset.make_one_shot_iterator()
+      source_tuple = source_iterator.get_next()
 
-      [source_image, source_class_label] = source_provider.get(['image', 'label'])
-      [target_image, target_class_label] = target_provider.get(['image', 'label'])
-
-      image_size = FLAGS.train_image_size or network_fn.default_image_size
-
-      source_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.source_dataset_dir), 'rb'))['means']
-      target_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.target_dataset_dir), 'rb'))['means']
-
-      source_image = image_preprocessing_fn(source_image, image_size, image_size, means=source_means)
-      target_image = image_preprocessing_fn(target_image, image_size, image_size, means=target_means)
-
-      source_images, source_class_labels, source_domain_labels = tf.train.batch(
-          [source_image, source_class_label, source_domain_label],
-          batch_size=FLAGS.batch_size,
-          num_threads=FLAGS.num_preprocessing_threads,
-          capacity=5 * FLAGS.batch_size)
-      target_images, target_class_labels, target_domain_labels = tf.train.batch(
-          [target_image, target_class_label, target_domain_label],
-          batch_size=FLAGS.batch_size,
-          num_threads=FLAGS.num_preprocessing_threads,
-          capacity=5 * FLAGS.batch_size)
-
-      source_class_labels = slim.one_hot_encoding(source_class_labels, source_dataset.num_classes)
-      source_domain_labels = slim.one_hot_encoding(source_domain_labels, 2)
-      target_domain_labels = slim.one_hot_encoding(target_domain_labels, 2)
-
-      source_batch_queue = slim.prefetch_queue.prefetch_queue(
-          [source_images, source_class_labels, source_domain_labels], capacity=2 * deploy_config.num_clones)
-      target_batch_queue = slim.prefetch_queue.prefetch_queue(
-          [target_images, target_class_labels, target_domain_labels], capacity=2 * deploy_config.num_clones)
+      target_filenames = FLAGS.target_dataset_file
+      target_dataset = tf.data.TFRecordDataset(target_filenames)
+      target_dataset = target_dataset.shuffle(buffer_size=5000)
+      target_dataset = target_dataset.repeat()
+      target_dataset = target_dataset.map(_get_parser('target'))
+      target_dataset = target_dataset.batch(FLAGS.batch_size)
+      target_iterator = target_dataset.make_one_shot_iterator()
+      target_tuple = target_iterator.get_next()
 
     # var for measuring training progress
     p = tf.divide(global_step, FLAGS.max_number_of_steps)
     # goes from 0 to 1 as training progress to supress noisy domain signal during initial training phase
-    domain_adaptation_weight = 2. / (1. + tf.exp(-10. * p))
+    domain_adaptation_weight = tf.cast(2. / (1. + tf.exp(-10. * p)), tf.float32)
 
     ####################
     # Define the model #
     ####################
-    def clone_fn(source_batch_queue, target_batch_queue):
+    def clone_fn(source_tuple, target_tuple):
       """Allows data parallelism by creating multiple clones of network_fn."""
-      source_images, source_class_labels, source_domain_labels  = source_batch_queue.dequeue()
-      target_images, _, target_domain_labels  = target_batch_queue.dequeue()
+      source_features, source_class_labels, source_domain_labels = source_tuple
+      target_features, _, target_domain_labels = target_tuple
+      features = tf.concat((source_features, target_features), 0)
+      features = tf.ensure_shape(features, [2 * FLAGS.batch_size, 2048])
 
-      _, source_class_logits, source_domain_logits = network_fn(source_images, domain_adaptation_weight, scope='main')
-      _, _, target_domain_logits = network_fn(target_images, domain_adaptation_weight, reuse=True, scope='main')
+      source_class_logits, domain_logits = revgrad(features, FLAGS.num_classes, domain_adaptation_weight, FLAGS.weight_decay, FLAGS.batch_size)
+      source_domain_logits = domain_logits[:FLAGS.batch_size]
+      target_domain_logits = domain_logits[FLAGS.batch_size:]
 
       #############################
       # Specify the loss function #
@@ -527,12 +507,12 @@ def main(_):
           source_domain_logits, source_domain_labels, scope='source_domain_adaptation_loss')
       slim.losses.softmax_cross_entropy(
           target_domain_logits, target_domain_labels, scope='target_domain_adaptation_loss')
-      return end_points
 
     # Gather initial summaries.
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+    summaries.add(tf.summary.scalar('training_progress', p))
 
-    clones = model_deploy.create_clones(deploy_config, clone_fn, [source_batch_queue, target_batch_queue])
+    clones = model_deploy.create_clones(deploy_config, clone_fn, [source_tuple, target_tuple])
     first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
@@ -549,15 +529,15 @@ def main(_):
 
     # Add summaries for losses.
     for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
-      if loss.op.name.find('domain_adaptation_loss') > 0:
-        continue
+      # if loss.op.name.find('domain_adaptation_loss') > 0:
+      #   continue
       summaries.add(tf.summary.scalar('Losses/%s' % loss.op.name, loss))
     summaries.add(tf.summary.scalar('Losses/domain_adaptation_loss', 
-        tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES, 'domain_adaptation_loss'))))
+        tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES, '.*domain_adaptation'))))
 
-    # Add summaries for variables.
-    for variable in slim.get_model_variables():
-      summaries.add(tf.summary.histogram(variable.op.name, variable))
+    # # Add summaries for variables.
+    # for variable in slim.get_model_variables():
+    #   summaries.add(tf.summary.histogram(variable.op.name, variable))
 
     #################################
     # Configure the moving averages #
@@ -569,9 +549,9 @@ def main(_):
     else:
       moving_average_variables, variable_averages = None, None
 
-    if FLAGS.quantize_delay >= 0:
-      tf.contrib.quantize.create_training_graph(
-          quant_delay=FLAGS.quantize_delay)
+    # if FLAGS.quantize_delay >= 0:
+    #   tf.contrib.quantize.create_training_graph(
+    #       quant_delay=FLAGS.quantize_delay)
 
     #########################################
     # Configure the optimization procedure. #
@@ -648,10 +628,11 @@ def main(_):
     ###########################
     slim.learning.train(
         train_tensor,
+        session_wrapper=tf_debug.LocalCLIDebugWrapperSession,
         logdir=FLAGS.train_dir,
         master=FLAGS.master,
         is_chief=(FLAGS.task == 0),
-        init_fn=_get_init_fn(),
+        # init_fn=_get_init_fn(),
         summary_op=summary_op,
         number_of_steps=FLAGS.max_number_of_steps,
         log_every_n_steps=FLAGS.log_every_n_steps,

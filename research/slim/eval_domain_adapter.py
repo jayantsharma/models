@@ -27,6 +27,7 @@ from datasets import dataset_factory
 from datasets.sections import TRAIN_SPLITS_TO_SIZES, TEST_SPLITS_TO_SIZES
 from nets import nets_factory
 from preprocessing import preprocessing_factory
+from dann import revgrad
 
 slim = tf.contrib.slim
 
@@ -59,7 +60,16 @@ tf.app.flags.DEFINE_string(
     'dataset_split_name', 'test', 'The name of the train/test split.')
 
 tf.app.flags.DEFINE_string(
-    'test_dataset_dir', None, 'The directory where the test dataset files are stored.')
+    'test_dataset_file', None, 'test dataset tfrecord')
+
+tf.app.flags.DEFINE_integer(
+    'num_domain_layers', 2, 'Number of hidden layers for domain classification.')
+
+tf.app.flags.DEFINE_integer(
+    'num_classes', 6, 'Number of classes in the dataset.')
+
+tf.app.flags.DEFINE_string(
+    'domain', 'target', 'source/target')
 
 tf.app.flags.DEFINE_integer(
     'labels_offset', 0,
@@ -75,7 +85,7 @@ tf.app.flags.DEFINE_string(
     'as `None`, then the model_name flag is used.')
 
 tf.app.flags.DEFINE_float(
-    'moving_average_decay', None,
+    'moving_average_decay', 0.9,
     'The decay to use for the moving average.'
     'If left as None, then moving averages are not used.')
 
@@ -91,65 +101,49 @@ tf.app.flags.DEFINE_bool(
 FLAGS = tf.app.flags.FLAGS
 
 
+def _get_parser(domain):
+    if domain not in ['source', 'target']:
+        raise ValueError('Domain must be source/target')
+    dlbl = 0 if domain == 'source' else 1
+
+    def _parse_example(serialized_record):
+        features = tf.parse_single_example(serialized_record,
+            features={
+                'feature_map': tf.FixedLenFeature([], tf.string),
+                'label': tf.FixedLenFeature([], tf.int64),
+            }, name='features')
+
+        feature_map = tf.decode_raw(features['feature_map'], tf.float32)
+        class_label = features['label']
+        domain_label = dlbl
+
+        return feature_map, class_label, domain_label
+    return _parse_example
+
+
 def main(_):
-  if not FLAGS.test_dataset_dir:
-    raise ValueError('You must supply the dataset directory with --dataset_dir')
+  if not FLAGS.test_dataset_file:
+    raise ValueError('You must supply the dataset directory with --test_dataset_file')
 
   tf.logging.set_verbosity(tf.logging.INFO)
   with tf.Graph().as_default():
     tf_global_step = slim.get_or_create_global_step()
 
     ######################
-    # Select the dataset #
+    # Declare datasets #
     ######################
-    test_dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.test_dataset_dir)
-
-    ####################
-    # Select the model #
-    ####################
-    network_fn = nets_factory.get_network_fn(
-        FLAGS.model_name,
-        num_classes=test_dataset.num_classes,
-        is_training=False)
-
-    #####################################
-    # Select the preprocessing function #
-    #####################################
-    preprocessing_name = FLAGS.preprocessing_name or FLAGS.model_name
-    image_preprocessing_fn = preprocessing_factory.get_preprocessing(
-        preprocessing_name,
-        is_training=False)
-
-    ##############################################################
-    # Create a dataset provider that loads data from the dataset #
-    ##############################################################
-    print('-------BATCH SIZE: {}--------'.format(FLAGS.batch_size))
-    train_domain_label, test_domain_label = 0, 1
-    test_provider = slim.dataset_data_provider.DatasetDataProvider(
-        test_dataset,
-        shuffle=False,
-        common_queue_capacity=2 * FLAGS.batch_size,
-        common_queue_min=FLAGS.batch_size)
-
-    [test_image, test_cat_label] = test_provider.get(['image', 'label'])
-    test_cat_label -= FLAGS.labels_offset
-
-    eval_image_size = FLAGS.eval_image_size or network_fn.default_image_size
-
-    test_means = pickle.load(open("{}/data_list.pkl".format(FLAGS.test_dataset_dir), 'rb'))['means']
-    test_image = image_preprocessing_fn(test_image, eval_image_size, eval_image_size, means=test_means)
-
-    images, cat_labels, domain_labels = tf.train.batch(
-        [test_image, test_cat_label, train_domain_label],
-        batch_size=FLAGS.batch_size,
-        num_threads=FLAGS.num_preprocessing_threads,
-        capacity=5 * FLAGS.batch_size)
+    filenames = eval(FLAGS.test_dataset_file)
+    dataset = tf.data.TFRecordDataset(filenames)
+    dataset = dataset.map(_get_parser(FLAGS.domain))
+    dataset = dataset.batch(FLAGS.batch_size)
+    iterator = dataset.make_one_shot_iterator()
+    features, class_labels, domain_labels = iterator.get_next()
 
     ####################
     # Define the model #
     ####################
-    adapted_features, cat_logits, domain_logits, end_points, _, _ = network_fn(images)
+    features.set_shape([None, 2048])
+    class_logits, domain_logits = revgrad(features, FLAGS.num_domain_layers, FLAGS.num_classes, 1., 1., FLAGS.batch_size, train=False)
 
     if FLAGS.quantize:
       tf.contrib.quantize.create_eval_graph()
@@ -163,15 +157,15 @@ def main(_):
     else:
       variables_to_restore = slim.get_variables_to_restore()
 
-    cat_predictions = tf.argmax(cat_logits, 1)
-    cat_labels = tf.squeeze(cat_labels)
+    class_predictions = tf.argmax(class_logits, 1)
     domain_predictions = tf.argmax(domain_logits, 1)
-    domain_labels = tf.squeeze(domain_labels)
+    # class_labels = tf.squeeze(class_labels)
+    # domain_labels = tf.squeeze(domain_labels)
 
     # Define the metrics:
     names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
         'AdaptationAccuracy': slim.metrics.streaming_accuracy(domain_predictions, domain_labels),
-        'ClassificationAccuracy': slim.metrics.streaming_accuracy(cat_predictions, cat_labels),
+        'ClassificationAccuracy': slim.metrics.streaming_accuracy(class_predictions, class_labels),
     })
 
     # Print the summaries to screen.
@@ -186,7 +180,14 @@ def main(_):
       num_batches = FLAGS.max_num_batches
     else:
       # This ensures that we make a single pass over all of the data.
-      num_batches = math.ceil(test_dataset.num_samples / float(FLAGS.batch_size))
+
+      ## META
+      # Dataset    - num_train/num_test
+      # Shoreview  - 6090 / 1523
+      # Minnetonka - 6818 / 1705
+      # StLouis    - 6782 / 1696
+      # Shorevw + Mtonka  - 12908 / 3228
+      num_batches = math.ceil(6782 / float(FLAGS.batch_size))
 
     def _eval(checkpoint_path):
         tf.logging.info('Evaluating %s' % checkpoint_path)
@@ -208,20 +209,22 @@ def main(_):
             variables_to_restore=variables_to_restore,
             eval_interval_secs=FLAGS.eval_interval_secs)
 
-    if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
-      ## LOOP
-      _eval_loop(FLAGS.checkpoint_path)
+    _eval(tf.train.latest_checkpoint(FLAGS.checkpoint_path))
 
-      ## LATEST CKPT
-      # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
-      # _eval(checkpoint_path)
+    # if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
+    #   ## LOOP
+    #   _eval_loop(FLAGS.checkpoint_path)
 
-      ## EVAL ALL CKPTS
-      # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
-      # for checkpoint_path in checkpoint_paths[-1:]:
-      #   _eval('.'.join(checkpoint_path.split('.')[:3]))
-    else:
-      _eval(FLAGS.checkpoint_path)
+    #   ## LATEST CKPT
+    #   # checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
+    #   # _eval(checkpoint_path)
+
+    #   ## EVAL ALL CKPTS
+    #   # checkpoint_paths = sorted(glob.glob('{}/model.ckpt-*data*'.format(FLAGS.checkpoint_path)), key=lambda s: int(s.split('-')[1].split('.')[0]))
+    #   # for checkpoint_path in checkpoint_paths[-1:]:
+    #   #   _eval('.'.join(checkpoint_path.split('.')[:3]))
+    # else:
+    #   _eval(FLAGS.checkpoint_path)
 
 
 if __name__ == '__main__':

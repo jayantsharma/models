@@ -74,11 +74,11 @@ tf.app.flags.DEFINE_integer(
     'The frequency with which logs are print.')
 
 tf.app.flags.DEFINE_integer(
-    'save_summaries_secs', 60,
+    'save_summaries_every_n_steps', 60,
     'The frequency with which summaries are saved, in seconds.')
 
 tf.app.flags.DEFINE_integer(
-    'save_interval_secs', 300,
+    'save_every_n_steps', 300,
     'The frequency with which the model is saved, in seconds.')
 
 tf.app.flags.DEFINE_integer(
@@ -187,7 +187,7 @@ tf.app.flags.DEFINE_integer(
     'The Number of gradients to collect before updating params.')
 
 tf.app.flags.DEFINE_float(
-    'moving_average_decay', None,
+    'moving_average_decay', 0.9,
     'The decay to use for the moving average.'
     'If left as None, then moving averages are not used.')
 
@@ -203,6 +203,9 @@ tf.app.flags.DEFINE_string(
 
 tf.app.flags.DEFINE_integer(
     'num_classes', 6, 'Number of classes in the dataset.')
+
+tf.app.flags.DEFINE_integer(
+    'num_domain_layers', 2, 'Number of hidden layers for domain classification.')
 
 tf.app.flags.DEFINE_string(
     'source_dataset_files', None, 'The directory where the source dataset files are stored.')
@@ -440,80 +443,66 @@ def main(_):
     raise ValueError('You must supply maximum number of steps')
 
   tf.logging.set_verbosity(tf.logging.INFO)
-  with tf.Graph().as_default():
-    #######################
-    # Config model_deploy #
-    #######################
-    deploy_config = model_deploy.DeploymentConfig(
-        num_clones=FLAGS.num_clones,
-        clone_on_cpu=FLAGS.clone_on_cpu,
-        replica_id=FLAGS.task,
-        num_replicas=FLAGS.worker_replicas,
-        num_ps_tasks=FLAGS.num_ps_tasks)
-
+  with tf.Graph().as_default() as g:
     # Create global_step
-    with tf.device(deploy_config.variables_device()):
-      global_step = slim.create_global_step()
+    global_step = slim.create_global_step()
     # Create eval step
     _get_or_create_eval_step()
 
     ######################
     # Declare datasets #
     ######################
-    with tf.device(deploy_config.inputs_device()):
-      source_filenames = eval(FLAGS.source_dataset_files)
-      source_dataset = tf.data.TFRecordDataset(source_filenames)
-      source_dataset = source_dataset.shuffle(buffer_size=5000)
-      source_dataset = source_dataset.repeat()
-      source_dataset = source_dataset.map(_get_parser('source'))
-      source_dataset = source_dataset.batch(FLAGS.batch_size)
-      source_iterator = source_dataset.make_one_shot_iterator()
-      source_tuple = source_iterator.get_next()
+    source_filenames = eval(FLAGS.source_dataset_files)
+    source_dataset = tf.data.TFRecordDataset(source_filenames)
+    source_dataset = source_dataset.shuffle(buffer_size=5000)
+    source_dataset = source_dataset.repeat()
+    source_dataset = source_dataset.map(_get_parser('source'))
+    source_dataset = source_dataset.batch(FLAGS.batch_size)
+    source_iterator = source_dataset.make_one_shot_iterator()
+    source_tuple = source_iterator.get_next()
 
-      target_filenames = FLAGS.target_dataset_file
-      target_dataset = tf.data.TFRecordDataset(target_filenames)
-      target_dataset = target_dataset.shuffle(buffer_size=5000)
-      target_dataset = target_dataset.repeat()
-      target_dataset = target_dataset.map(_get_parser('target'))
-      target_dataset = target_dataset.batch(FLAGS.batch_size)
-      target_iterator = target_dataset.make_one_shot_iterator()
-      target_tuple = target_iterator.get_next()
+    target_filenames = FLAGS.target_dataset_file
+    target_dataset = tf.data.TFRecordDataset(target_filenames)
+    target_dataset = target_dataset.shuffle(buffer_size=5000)
+    target_dataset = target_dataset.repeat()
+    target_dataset = target_dataset.map(_get_parser('target'))
+    target_dataset = target_dataset.batch(FLAGS.batch_size)
+    target_iterator = target_dataset.make_one_shot_iterator()
+    target_tuple = target_iterator.get_next()
 
     # var for measuring training progress
-    p = tf.divide(global_step, FLAGS.max_number_of_steps)
+    p = tf.divide(global_step, tf.cast(FLAGS.max_number_of_steps, tf.int64), name='training_progress')
     # goes from 0 to 1 as training progress to supress noisy domain signal during initial training phase
-    domain_adaptation_weight = tf.cast(2. / (1. + tf.exp(-10. * p)), tf.float32)
+    l = 2. / (1. + tf.exp(-10. * p)) - 1
+    domain_adaptation_weight = tf.cast(3. * l, tf.float32, name='domain_adaptation_weight')
 
     ####################
     # Define the model #
     ####################
-    def clone_fn(source_tuple, target_tuple):
-      """Allows data parallelism by creating multiple clones of network_fn."""
-      source_features, source_class_labels, source_domain_labels = source_tuple
-      target_features, _, target_domain_labels = target_tuple
-      features = tf.concat((source_features, target_features), 0)
-      features = tf.ensure_shape(features, [2 * FLAGS.batch_size, 2048])
+    source_features, source_class_labels, source_domain_labels = source_tuple
+    target_features, _, target_domain_labels = target_tuple
+    features = tf.concat((source_features, target_features), 0)
+    features = tf.ensure_shape(features, [2 * FLAGS.batch_size, 2048])
 
-      source_class_logits, domain_logits = revgrad(features, FLAGS.num_classes, domain_adaptation_weight, FLAGS.weight_decay, FLAGS.batch_size)
-      source_domain_logits = domain_logits[:FLAGS.batch_size]
-      target_domain_logits = domain_logits[FLAGS.batch_size:]
+    source_class_logits, domain_logits = revgrad(features, FLAGS.num_domain_layers, FLAGS.num_classes, domain_adaptation_weight, FLAGS.weight_decay, FLAGS.batch_size)
+    source_domain_logits = domain_logits[:FLAGS.batch_size]
+    target_domain_logits = domain_logits[FLAGS.batch_size:]
 
-      #############################
-      # Specify the loss function #
-      #############################
-      slim.losses.softmax_cross_entropy(
-          source_class_logits, source_class_labels, scope='source_classification_loss')
-      slim.losses.softmax_cross_entropy(
-          source_domain_logits, source_domain_labels, scope='source_domain_adaptation_loss')
-      slim.losses.softmax_cross_entropy(
-          target_domain_logits, target_domain_labels, scope='target_domain_adaptation_loss')
+    #############################
+    # Specify the loss function #
+    #############################
+    slim.losses.softmax_cross_entropy(
+        source_class_logits, source_class_labels, scope='source_classification_loss')
+    slim.losses.softmax_cross_entropy(
+        source_domain_logits, source_domain_labels, scope='source_domain_adaptation_loss')
+    slim.losses.softmax_cross_entropy(
+        target_domain_logits, target_domain_labels, scope='target_domain_adaptation_loss')
 
     # Gather initial summaries.
     summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
     summaries.add(tf.summary.scalar('training_progress', p))
+    summaries.add(tf.summary.scalar('domain_adaptation/weight', domain_adaptation_weight))
 
-    clones = model_deploy.create_clones(deploy_config, clone_fn, [source_tuple, target_tuple])
-    first_clone_scope = deploy_config.clone_scope(0)
     # Gather update_ops from the first clone. These contain, for example,
     # the updates for the batch_norm variables created by network_fn.
     # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
@@ -528,11 +517,15 @@ def main(_):
     #                                   tf.nn.zero_fraction(x)))
 
     # Add summaries for losses.
-    for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
-      # if loss.op.name.find('domain_adaptation_loss') > 0:
-      #   continue
-      summaries.add(tf.summary.scalar('Losses/%s' % loss.op.name, loss))
+    summaries.add(tf.summary.scalar('Losses/source_classification_loss', 
+        tf.get_collection(tf.GraphKeys.LOSSES, 'source_classification_loss')[0]))
+    summaries.add(tf.summary.scalar('domain_adaptation/source_loss', 
+        tf.get_collection(tf.GraphKeys.LOSSES, 'source_domain_adaptation_loss')[0]))
+    summaries.add(tf.summary.scalar('domain_adaptation/target_loss', 
+        tf.get_collection(tf.GraphKeys.LOSSES, 'target_domain_adaptation_loss')[0]))
     summaries.add(tf.summary.scalar('Losses/domain_adaptation_loss', 
+        tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES, '.*domain_adaptation'))))
+    summaries.add(tf.summary.scalar('domain_adaptation/total_loss', 
         tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES, '.*domain_adaptation'))))
 
     # # Add summaries for variables.
@@ -549,42 +542,30 @@ def main(_):
     else:
       moving_average_variables, variable_averages = None, None
 
-    # if FLAGS.quantize_delay >= 0:
-    #   tf.contrib.quantize.create_training_graph(
-    #       quant_delay=FLAGS.quantize_delay)
-
     #########################################
     # Configure the optimization procedure. #
     #########################################
-    with tf.device(deploy_config.optimizer_device()):
-      # learning_rate = _configure_learning_rate(test_dataset.num_samples, global_step)
-      learning_rate = 1e-2 / ((1. + 10 * p) ** 0.75)
-      optimizer = _configure_optimizer(learning_rate)
-      summaries.add(tf.summary.scalar('learning_rate', learning_rate))
+    # learning_rate = _configure_learning_rate(test_dataset.num_samples, global_step)
+    learning_rate = tf.divide(tf.cast(1e-4, tf.float64), (1. + 10 * p) ** 0.75, name='learning_rate')
+    optimizer = _configure_optimizer(learning_rate)
+    summaries.add(tf.summary.scalar('learning_rate', learning_rate))
 
-    if FLAGS.sync_replicas:
-      # If sync_replicas is enabled, the averaging will be done in the chief
-      # queue runner.
-      optimizer = tf.train.SyncReplicasOptimizer(
-          opt=optimizer,
-          replicas_to_aggregate=FLAGS.replicas_to_aggregate,
-          total_num_replicas=FLAGS.worker_replicas,
-          variable_averages=variable_averages,
-          variables_to_average=moving_average_variables)
-    elif FLAGS.moving_average_decay:
+    if FLAGS.moving_average_decay:
       # Update ops executed locally by trainer.
       update_ops.append(variable_averages.apply(moving_average_variables))
 
     # Variables to train.
     variables_to_train = _get_variables_to_train()
 
-    #  and returns a train_tensor and summary_op
-    total_loss, clones_gradients = model_deploy.optimize_clones(
-        clones,
-        optimizer,
-        var_list=variables_to_train)
+    model_loss = tf.add_n(tf.get_collection(tf.GraphKeys.LOSSES))
+    regularization_loss = tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+    total_loss = model_loss + regularization_loss
     # Add total_loss to summary.
+    summaries.add(tf.summary.scalar('Losses/regularization_loss', regularization_loss))
     summaries.add(tf.summary.scalar('Losses/total_loss', total_loss))
+
+    # Compute gradients
+    gradients = optimizer.compute_gradients(total_loss, var_list=variables_to_train)
 
     # regs = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
     # print_ops = []
@@ -601,45 +582,70 @@ def main(_):
     # resnet_v2_152/logits/kernel/Regularizer/l2_regularizer:0[0.0136216842]
 
     # Create gradient updates.
-    grad_updates = optimizer.apply_gradients(clones_gradients,
-                                             global_step=global_step)
+    grad_updates = optimizer.apply_gradients(gradients, global_step=global_step)
     update_ops.append(grad_updates)
 
     update_op = tf.group(*update_ops)
     # print_op = tf.group(*print_ops)
     # with tf.control_dependencies([update_op, print_op]):
     with tf.control_dependencies([update_op]):
-      train_tensor = tf.identity(total_loss, name='train_op')
-
-    # Add the summaries from the first clone. These contain the summaries
-    # created by model_fn and either optimize_clones() or _gather_clone_loss().
-    summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES,
-                                       first_clone_scope))
+      train_op = tf.identity(total_loss, name='train_op')
 
     # Merge all summaries together.
     summary_op = tf.summary.merge(list(summaries), name='summary_op')
+    summary_writer = tf.summary.FileWriter(FLAGS.train_dir, graph=g)
 
     # Define saver - only diff from default is in what ckpts to keep
     saver = tf.train.Saver(keep_checkpoint_every_n_hours=0.5)
+
+    sess = tf.Session()
+    # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+
+    if tf.train.latest_checkpoint(FLAGS.train_dir):
+        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
+    else:
+        sess.run(tf.global_variables_initializer())
+
+    # global_step
+    gs = sess.run(global_step)
+
+    while gs < FLAGS.max_number_of_steps:
+        gs, loss = sess.run([global_step, train_op])
+
+        if gs % FLAGS.log_every_n_steps == 0:
+            print('global step: %d: loss = %f' % (gs, loss))
+
+        if gs % FLAGS.save_every_n_steps == 0:
+            print('global step: %d: checkpoint' % (gs))
+            saver.save(sess, FLAGS.train_dir + '/model.ckpt', global_step=gs)
+
+        if gs % FLAGS.save_summaries_every_n_steps == 0:
+            print('global step: %d: summary' % (gs))
+            gs, loss, summaries = sess.run([global_step, train_op, summary_op])
+            # import ipdb; ipdb.set_trace()
+            summary_writer.add_summary(summaries, global_step=gs)
+            summary_writer.flush()
+
+    summary_writer.close()
 
 
     ###########################
     # Kicks off the training. #
     ###########################
-    slim.learning.train(
-        train_tensor,
-        session_wrapper=tf_debug.LocalCLIDebugWrapperSession,
-        logdir=FLAGS.train_dir,
-        master=FLAGS.master,
-        is_chief=(FLAGS.task == 0),
-        # init_fn=_get_init_fn(),
-        summary_op=summary_op,
-        number_of_steps=FLAGS.max_number_of_steps,
-        log_every_n_steps=FLAGS.log_every_n_steps,
-        save_summaries_secs=FLAGS.save_summaries_secs,
-        saver=saver,
-        save_interval_secs=FLAGS.save_interval_secs,
-        sync_optimizer=optimizer if FLAGS.sync_replicas else None)
+    # slim.learning.train(
+    #     train_tensor,
+    #     session_wrapper=tf_debug.LocalCLIDebugWrapperSession,
+    #     logdir=FLAGS.train_dir,
+    #     master=FLAGS.master,
+    #     is_chief=(FLAGS.task == 0),
+    #     # init_fn=_get_init_fn(),
+    #     summary_op=summary_op,
+    #     number_of_steps=FLAGS.max_number_of_steps,
+    #     log_every_n_steps=FLAGS.log_every_n_steps,
+    #     save_summaries_secs=FLAGS.save_summaries_secs,
+    #     saver=saver,
+    #     save_interval_secs=FLAGS.save_interval_secs,
+    #     sync_optimizer=optimizer if FLAGS.sync_replicas else None)
 
 
 if __name__ == '__main__':

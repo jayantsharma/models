@@ -102,8 +102,8 @@ def main(_):
     ######################
     # Select the dataset #
     ######################
-    dataset = dataset_factory.get_dataset(
-        FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
+    # dataset = dataset_factory.get_dataset(
+    #     FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir)
 
     ####################
     # Select the model #
@@ -222,10 +222,10 @@ def main(_):
     # else:
     #   _eval(FLAGS.checkpoint_path)
 
-    cats = data['cats']
+    # cats = data['cats']
     # ff_idx = cats.index("frozenfood")
     # cats.pop(ff_idx)
-    # cats = ["vegetables"]
+    cats = ["frozenfood"]
     with tf.Session() as sess:
         saver.restore(sess, FLAGS.checkpoint_path)
         for cat in cats:
@@ -237,7 +237,7 @@ def main(_):
                 lgts, ftrs = sess.run([logits, features], feed_dict={ raw_image: I })
                 feature_dump = { 'logits': lgts, 'features': ftrs }
                 pickle.dump(feature_dump, 
-                        open("{}/{}/minnetonka_resnet_features_{}.pkl".format(FLAGS.dataset_dir, cat, imgfile.split('/')[-1][6:-4]), 
+                        open("{}/{}/stpaul_resnet_features_{}.pkl".format(FLAGS.dataset_dir, cat, imgfile.split('/')[-1][6:-4]), 
                             "wb"))
                 if i % 100 == 0:
                     print("{}/{}".format(i,num_imgfiles))
